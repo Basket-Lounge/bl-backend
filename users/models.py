@@ -7,8 +7,8 @@ from .managers import UserManager
 # Create your models here.
 
 class Role(models.Model):
-    name = models.CharField(max_length=100)
-    description = models.CharField(max_length=1000)
+    name = models.CharField(max_length=128)
+    description = models.CharField(max_length=512)
     weight = models.IntegerField()
 
     def __str__(self):
@@ -113,3 +113,36 @@ class UserLike(models.Model):
     class Meta:
         unique_together = ['user', 'liked_user']
 
+class Block(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    blocked_user = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='blocked_user'
+    )
+
+    def __str__(self):
+        return f'{self.id}'
+    
+    class Meta:
+        unique_together = ['user', 'blocked_user']
+
+class DirectMessage(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False
+    )
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sender')
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='receiver')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.sender} to {self.receiver}'
