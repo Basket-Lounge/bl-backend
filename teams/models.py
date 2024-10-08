@@ -10,7 +10,7 @@ class Language(models.Model):
         return self.name
     
 class Team(models.Model):
-    id = models.SmallAutoField(primary_key=True)
+    id = models.PositiveBigIntegerField(primary_key=True)
     symbol = models.CharField(max_length=10)
 
     def __str__(self):
