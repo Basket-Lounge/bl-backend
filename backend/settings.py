@@ -163,3 +163,6 @@ SOCIALACCOUNT_PROVIDERS = {
         }
     },
 }
+
+# Misc settings
+SEASON_YEAR = '2024-25'
