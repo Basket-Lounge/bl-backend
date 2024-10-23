@@ -17,9 +17,15 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
+from debug_toolbar.toolbar import debug_toolbar_urls
+
+from users.views import GoogleLoginView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('accounts/', include('allauth.urls')),
+    # path('accounts/', include('allauth.urls')),
     path('api/', include('api.urls')),
-    path("_allauth/", include("allauth.headless.urls")),
-]
+    # path("_allauth/", include("allauth.headless.urls")),
+    path('dj-rest-auth/', include('dj_rest_auth.urls')),
+    path('dj-rest-auth/google/', GoogleLoginView.as_view(), name='google_login'),
+] + debug_toolbar_urls()

@@ -10,8 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 from environs import Env
+
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -45,30 +48,43 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'django.contrib.sites',
     'django.contrib.staticfiles',
     'django_extensions',
+    "corsheaders",
+    "debug_toolbar",
     'allauth',
     'allauth.account',
-    'allauth.headless',
+    # 'allauth.headless',
     'allauth.socialaccount',
     'allauth.socialaccount.providers.google',
-    'allauth.socialaccount.providers.microsoft',
-    'allauth.socialaccount.providers.instagram',
+    # 'allauth.socialaccount.providers.microsoft',
+    # 'allauth.socialaccount.providers.instagram',
     'rest_framework',
+    'rest_framework.authtoken',
+    'dj_rest_auth',
+    'dj_rest_auth.registration',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    "corsheaders.middleware.CorsMiddleware",
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "debug_toolbar.middleware.DebugToolbarMiddleware",
     "allauth.account.middleware.AccountMiddleware",
 ]
 
 ROOT_URLCONF = 'backend.urls'
+
+INTERNAL_IPS = [
+    "127.0.0.1",
+    "localhost",
+]
 
 TEMPLATES = [
     {
@@ -147,6 +163,64 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'users.User'
 
+
+# Misc settings
+SESSION_COOKIE_SAMESITE = 'None'
+SEASON_YEAR = '2024-25'
+
+# CORS settings
+FRONTEND_URL = env.str('FRONTEND_URL')
+
+CORS_ALLOWED_ORIGINS = [
+    FRONTEND_URL,
+]
+CORS_ALLOW_CREDENTIALS = True
+CORS_ORIGIN_ALLOW_ALL = False
+
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = [
+    *default_headers,
+    "time-zone"
+]
+
+# Rest framework settings
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'users.authentication.CookieJWTAccessAuthentication',
+        'dj_rest_auth.jwt_auth.JWTCookieAuthentication',
+    )
+}
+
+REST_AUTH = {
+    'USE_JWT': True,
+    'JWT_AUTH_COOKIE': 'access_token',
+    'JWT_AUTH_REFRESH_COOKIE': 'refresh_token',
+    'JWT_AUTH_SECURE': True,
+    'JWT_AUTH_SAMESITE': 'None',
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    
+    "AUTH_TOKEN_CLASSES": (
+        "rest_framework_simplejwt.tokens.AccessToken",
+        "rest_framework_simplejwt.tokens.RefreshToken",     
+    ),
+
+    'AUTH_ACCESS_TOKEN_COOKIE': 'access_token',  # Cookie name. Enables cookies if value is set.
+    'AUTH_REFRESH_TOKEN_COOKIE': 'refresh_token',  # Cookie name. Enables cookies if value is set.
+    'AUTH_COOKIE_DOMAIN': None,     # A string like "example.com", or None for standard domain cookie.
+    'AUTH_COOKIE_SECURE': True,    # Whether the auth cookies should be secure (https:// only).
+    'AUTH_COOKIE_HTTP_ONLY' : True, # Http only cookie flag.It's not fetch by javascript.
+    'AUTH_COOKIE_PATH': '/',        # The path of the auth cookie.
+    'AUTH_COOKIE_SAMESITE': 'None',  # Whether to set the flag restricting cookie leaks on cross-site requests.
+}
+
+SITE_ID = 1
+
 # Allauth settings
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_EMAIL_REQUIRED = True
@@ -156,13 +230,36 @@ ACCOUNT_AUTHENTICATION_METHOD = 'email'
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
         'EMAIL_AUTHENTICATION': True,
-        'APP': {
-            'client_id': env.str('GOOGLE_CLIENT_ID'),
-            'secret': env.str('GOOGLE_CLIENT_SECRET'),
-            'key': ''
-        }
+        'SCOPE': [
+            'profile',
+            'email',
+        ],
+        'AUTH_PARAMS': {
+            'access_type': 'online',
+        },
     },
 }
 
-# Misc settings
-SEASON_YEAR = '2024-25'
+SOCIAL_AUTH_GOOGLE_CALLBACK = FRONTEND_URL + '/login/google/callback/'
+
+SESSION_COOKIE_SECURE = True
+
+## Celery settings
+CELERY_BROKER_URL = env.str('CELERY_BROKER_URL')
+CELERY_RESULT_BACKEND = env.str('CELERY_RESULT_BACKEND')
+
+CELERY_BEAT_SCHEDULE = {
+    "update_live_game_score": {
+        "task": "games.tasks.update_game_score",
+        "schedule": crontab(minute="*/3"),
+        "options": {"queue": "today_game_update"},
+    },
+}
+
+## Cache settings
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379",
+    }
+}
