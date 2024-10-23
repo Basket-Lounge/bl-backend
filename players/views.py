@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 
@@ -16,7 +17,7 @@ class PlayersViewSet(viewsets.ViewSet):
             league_id='00',
             per_mode48='PerGame',
             scope='S',
-            season='2023-24',
+            season=settings.SEASON_YEAR,
             season_type_all_star='Regular Season',
             stat_category_abbreviation='PTS'
         )
