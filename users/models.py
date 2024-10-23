@@ -2,12 +2,13 @@ import uuid
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
 
+from users.utils import generate_random_username
+
 from .managers import UserManager
 
-# Create your models here.
 
 class Role(models.Model):
-    name = models.CharField(max_length=128)
+    name = models.CharField(max_length=128, unique=True)
     description = models.CharField(max_length=512)
     weight = models.IntegerField()
 
@@ -43,10 +44,16 @@ class User(AbstractBaseUser):
     role = models.ForeignKey(
         Role, 
         on_delete=models.PROTECT,
+        default=Role.get_regular_user_role
     )
-    username = models.CharField(max_length=128, unique=True)
+    username = models.CharField(
+        max_length=128, 
+        unique=True, 
+        default=generate_random_username
+    )
     email = models.EmailField(unique=True)
     experience = models.IntegerField(default=0)
+    introduction = models.TextField(blank=True)
     is_profile_visible = models.BooleanField(
         default=True,
         verbose_name='Profile visibility'
@@ -138,8 +145,16 @@ class DirectMessage(models.Model):
         default=uuid.uuid4, 
         editable=False
     )
-    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sender')
-    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='receiver')
+    sender = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='sender'
+    )
+    receiver = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='receiver'
+    )
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
