@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.models import Team, TeamName, Language
+from teams.models import Team, TeamLike, TeamName, Language
 
 
 class LanguageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -11,11 +11,24 @@ class LanguageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
 
 
 class TeamNameSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    team = serializers.SerializerMethodField()
     language = serializers.SerializerMethodField()
 
     class Meta:
         model = TeamName
         fields = '__all__'
+
+    def get_team(self, obj):
+        if not hasattr(obj, 'team'):
+            return None
+        
+        context = self.context.get('team', {})
+        serializer = TeamSerializer(
+            obj.team, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
 
     def get_language(self, obj):
         if not hasattr(obj, 'language'):
@@ -38,12 +51,33 @@ class TeamSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         fields = '__all__'
 
     def get_teamname_set(self, obj):
-        teamnames = obj.teamname_set.all()
+        teamnames = obj.teamname_set
         context = self.context.get('teamname', {})
         serializer = TeamNameSerializer(
             teamnames, 
             many=True, 
             context=self.context,
             **context
+        )
+        return serializer.data
+
+
+class TeamLikeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    team = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TeamLike
+        fields = '__all__'
+        read_only_fields = ('user',)
+
+    def get_team(self, obj):
+        if not hasattr(obj, 'team'):
+            return None
+        
+        context = self.context.get('team', {})
+        serializer = TeamSerializer(
+            obj.team, 
+            context=self.context,
+            **context    
         )
         return serializer.data
