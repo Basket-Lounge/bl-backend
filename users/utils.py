@@ -1,6 +1,6 @@
 import uuid
 
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken, UntypedToken
 
 from django.conf import settings
 
@@ -39,3 +39,33 @@ def verify_refresh_token_in_str(token):
         return RefreshToken(token)
     except Exception as e:
         return None
+    
+def generate_websocket_connection_token(user_id: int):
+    token = UntypedToken()
+    token['sub'] = str(user_id)
+    token.set_exp(lifetime=settings.SIMPLE_JWT.get('ACCESS_TOKEN_LIFETIME'))
+
+    return token
+
+
+def generate_websocket_subscription_token(user_id: int, channel_name: str):
+    token = UntypedToken()
+    token['sub'] = str(user_id)
+    token['channel'] = channel_name
+    token.set_exp(lifetime=settings.SIMPLE_JWT.get('ACCESS_TOKEN_LIFETIME'))
+
+    return token
+
+def validate_websocket_subscription_token(subscription_token: str, channel_name: str, user_id: int):
+    try: 
+        token = UntypedToken(subscription_token)
+    except Exception as e:
+        return False
+
+    if token.get('channel') != channel_name:
+        return False
+
+    if token.get('sub') != str(user_id):
+        return False
+
+    return True

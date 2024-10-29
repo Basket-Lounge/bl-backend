@@ -11,7 +11,8 @@ from dj_rest_auth.registration.serializers import SocialLoginSerializer
 from requests.exceptions import HTTPError
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.serializers import TeamLikeSerializer
+from teams.models import Post
+from teams.serializers import PostStatusSerializer, TeamLikeSerializer, TeamSerializer
 from users.models import Role
 
 
@@ -155,3 +156,53 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
             **context    
         )
         return serializer.data
+    
+
+class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    status_data = serializers.SerializerMethodField()
+    team_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    likes_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Post
+        exclude = ('status', 'team', 'user')
+
+    def get_status_data(self, obj):
+        if not hasattr(obj, 'status'):
+            return None
+        
+        context = self.context.get('status', {})
+        serializer = PostStatusSerializer(
+            obj.status, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_team_data(self, obj):
+        if not hasattr(obj, 'team'):
+            return None
+        
+        context = self.context.get('team', {})
+        serializer = TeamSerializer(
+            obj.team, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_likes_count(self, obj):
+        return obj.postlike_set.count()

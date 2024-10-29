@@ -21,7 +21,7 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 from dj_rest_auth.registration.views import SocialLoginView
 
-from users.utils import calculate_level
+from users.utils import calculate_level, generate_websocket_connection_token, generate_websocket_subscription_token
 
 
 class CustomGoogleOAuth2Adapter(GoogleOAuth2Adapter):
@@ -232,3 +232,14 @@ class JWTViewSet(ViewSet):
         )
 
         return response
+    
+    @action(detail=False, methods=['get'], url_path='websocket-access')
+    def access(self, request):
+        token = generate_websocket_connection_token(request.user.id)
+        return Response({'token': str(token)})
+
+    @action(detail=False, methods=['get'], url_path='subscription')
+    def subscription(self, request):
+        channel_name = request.query_params.get('channel')
+        token = generate_websocket_subscription_token(request.user.id, channel_name)
+        return Response({'token': str(token)})
