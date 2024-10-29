@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from players.models import Player
+from players.models import Player, PlayerCareerStatistics
 from teams.serializers import TeamSerializer
 
 
