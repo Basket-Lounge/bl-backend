@@ -368,7 +368,8 @@ class LineScore(models.Model):
         unique_together = ('game', 'team')  # Ensure one line score per team per game
 
     def __str__(self):
-        return f"{self.team.symbol} - {self.game.game_code}: {self.pts} pts"
+        return f"{self.team.symbol} - {self.game.game_code}"
+
 
 class TeamStatistics(models.Model):
     # Basic team information (you might want to link it to a Team model)

@@ -9,10 +9,19 @@ class Player(models.Model):
     slug = models.SlugField(max_length=150, unique=True)  # Slug for URLs
 
     # Team information
-    team = models.ForeignKey('teams.Team', on_delete=models.CASCADE, null=True, blank=True)
+    team = models.ForeignKey(
+        'teams.Team', 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True
+    )
 
     # Player profile details
-    jersey_number = models.CharField(max_length=10, blank=True, null=True)  # Jersey number can be alphanumeric
+    jersey_number = models.CharField(
+        max_length=10, 
+        blank=True, 
+        null=True
+    )  # Jersey number can be alphanumeric
     position = models.CharField(max_length=20)  # Position, e.g., "G" or "F-C"
     height = models.CharField(max_length=10)  # Height in format like "6-7"
     weight = models.FloatField(null=True)  # Weight in pounds
@@ -25,9 +34,9 @@ class Player(models.Model):
     draft_number = models.IntegerField(null=True, blank=True)
 
     # Roster status and career details
-    roster_status = models.FloatField()  # Status indicating active roster, usually 1.0 for active
-    from_year = models.IntegerField()  # First year in the league
-    to_year = models.IntegerField()  # Last active or current year
+    roster_status = models.FloatField(null=True)  # Status indicating active roster, usually 1.0 for active
+    from_year = models.IntegerField(null=True)  # First year in the league
+    to_year = models.IntegerField(null=True)  # Last active or current year
     stats_timeframe = models.CharField(max_length=20, default="Season")  # Default "Season"
 
     # Optional player stats
@@ -42,14 +51,30 @@ class Player(models.Model):
 class PlayerStatistics(models.Model):
     # Link to Player
     player = models.ForeignKey(Player, on_delete=models.CASCADE)
-    game = models.ForeignKey('games.Game', on_delete=models.CASCADE, default=None, null=True)
-
-    team = models.ForeignKey('teams.Team', on_delete=models.CASCADE, default=None, null=True)
+    game = models.ForeignKey(
+        'games.Game', 
+        on_delete=models.CASCADE, 
+        default=None, 
+        null=True
+    )
+    team = models.ForeignKey(
+        'teams.Team', 
+        on_delete=models.CASCADE, 
+        default=None,
+        null=True
+    )
 
     # Game status details
-    status = models.CharField(max_length=10, choices=[("ACTIVE", "Active"), ("INACTIVE", "Inactive")])
+    status = models.CharField(
+        max_length=10, 
+        choices=[("ACTIVE", "Active"), ("INACTIVE", "Inactive")]
+    )
     order = models.IntegerField()  # Player's order in the lineup
-    position = models.CharField(max_length=5, null=True, blank=True)  # Position, e.g., SF, PF, etc.
+    position = models.CharField(
+        max_length=5, 
+        null=True, 
+        blank=True
+    )  # Position, e.g., SF, PF, etc.
     starter = models.BooleanField(default=False)  # Whether the player started the game
 
     # Game statistics
@@ -93,4 +118,41 @@ class PlayerStatistics(models.Model):
         return f"{self.player.first_name} {self.player.last_name} - {self.game.game_code}"
 
     
-# class PlayerCareerStatistics(models.Model):
+class PlayerCareerStatistics(models.Model):
+    player = models.ForeignKey(Player, on_delete=models.CASCADE)
+    team = models.ForeignKey(
+        'teams.Team',
+        on_delete=models.CASCADE, 
+        default=None, 
+        null=True
+    )
+    season_id = models.CharField(max_length=20)
+    player_age = models.FloatField()
+    games_played = models.IntegerField()
+    games_started = models.IntegerField()
+    minutes = models.FloatField()  # Renamed from 'min' to 'minutes' to avoid conflict with the built-in 'min' function
+    field_goals_made = models.FloatField()
+    field_goals_attempted = models.FloatField()
+    field_goals_percentage = models.FloatField()
+    three_point_field_goals_made = models.FloatField()
+    three_point_field_goals_attempted = models.FloatField()
+    three_point_field_goals_percentage = models.FloatField()
+    free_throws_made = models.FloatField()
+    free_throws_attempted = models.FloatField()
+    free_throws_percentage = models.FloatField()
+    rebounds_offensive = models.FloatField()
+    rebounds_defensive = models.FloatField()
+    rebounds_total = models.FloatField()
+    assists = models.FloatField()
+    steals = models.FloatField()
+    blocks = models.FloatField()
+    turnovers = models.FloatField()
+    personal_fouls = models.FloatField()
+    points = models.FloatField()
+
+    class Meta:
+        unique_together = ('player', 'season_id', 'team')  # Ensures unique records for a player-season-team combination
+
+    def __str__(self):
+        return f"{self.player.first_name} {self.player.last_name} - {self.season_id}"
+

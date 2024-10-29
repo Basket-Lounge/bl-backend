@@ -43,12 +43,26 @@ class TeamLike(models.Model):
     class Meta:
         unique_together = ['team', 'user']
 
+
 class PostStatus(models.Model):
     id = models.SmallAutoField(primary_key=True)
     name = models.CharField(max_length=128)
 
     def __str__(self):
         return self.name
+    
+class PostStatusDisplayName(models.Model):
+    id = models.SmallAutoField(primary_key=True)
+    post_status = models.ForeignKey(PostStatus, on_delete=models.CASCADE)
+    language = models.ForeignKey(Language, on_delete=models.CASCADE)
+    display_name = models.CharField(max_length=128)
+
+    def __str__(self):
+        return f'{self.post_status.name} - {self.language.name}'
+    
+    class Meta:
+        unique_together = ['post_status', 'language']
+
 
 class Post(models.Model):
     id = models.UUIDField(
