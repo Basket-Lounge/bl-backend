@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.models import Team, TeamLike, TeamName, Language
+from teams.models import PostStatus, PostStatusDisplayName, Team, TeamLike, TeamName, Language
 
 
 class LanguageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -77,6 +77,58 @@ class TeamLikeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
         context = self.context.get('team', {})
         serializer = TeamSerializer(
             obj.team, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+
+class PostStatusSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    poststatusdisplayname_set = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PostStatus
+        fields = '__all__'
+
+    def get_poststatusdisplayname_set(self, obj):
+        poststatusdisplaynames = obj.poststatusdisplayname_set
+        context = self.context.get('poststatusdisplayname', {})
+        serializer = PostStatusDisplayNameSerializer(
+            poststatusdisplaynames, 
+            many=True, 
+            context=self.context,
+            **context
+        )
+        return serializer.data
+
+
+class PostStatusDisplayNameSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    post_status_data = serializers.SerializerMethodField()
+    language_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PostStatusDisplayName
+        exclude = ('post_status', 'language')
+
+    def get_post_status_data(self, obj):
+        if not hasattr(obj, 'post_status'):
+            return None
+        
+        context = self.context.get('post_status', {})
+        serializer = PostStatusSerializer(
+            obj.post_status, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_language_data(self, obj):
+        if not hasattr(obj, 'language'):
+            return None
+        
+        context = self.context.get('language', {})
+        serializer = LanguageSerializer(
+            obj.language, 
             context=self.context,
             **context    
         )

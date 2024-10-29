@@ -13,7 +13,8 @@ from nba_api.stats.endpoints.playergamelogs import PlayerGameLogs
 import pytz
 
 from games.models import Game, LineScore
-from games.serializers import GameSerializer, LineScoreSerializer
+from games.serializers import GameSerializer, LineScoreSerializer, PlayerCareerStatisticsSerializer
+from players.models import Player, PlayerCareerStatistics, PlayerStatistics
 from teams.models import Team, TeamName
 from teams.utils import calculate_time, create_empty_player_season_stats
 
@@ -66,7 +67,15 @@ def get_all_games_for_team_this_season(team_id):
     games = Game.objects.select_related(
         'home_team', 'visitor_team'
     ).prefetch_related(
-        'line_scores',
+        Prefetch(
+            'line_scores',
+            queryset=LineScore.objects.select_related('team').prefetch_related(
+                Prefetch(
+                    'team__teamname_set',
+                    queryset=all_team_names
+                )
+            )
+        ),
         Prefetch(
             'home_team__teamname_set',
             queryset=all_team_names
@@ -82,6 +91,12 @@ def get_all_games_for_team_this_season(team_id):
     serializer = GameSerializer(
         games,
         many=True,
+        fields_exclude=[
+            'home_team_statistics',
+            'visitor_team_statistics',
+            'home_team_player_statistics',
+            'visitor_team_player_statistics'
+        ],
         context={
             'linescore': {
                 'fields_exclude': ['id', 'game']
@@ -112,7 +127,15 @@ def get_monthly_games_for_team_this_season(team_id, month):
     games = Game.objects.select_related(
         'home_team', 'visitor_team'
     ).prefetch_related(
-        'line_scores',
+        Prefetch(
+            'line_scores',
+            queryset=LineScore.objects.select_related('team').prefetch_related(
+                Prefetch(
+                    'team__teamname_set',
+                    queryset=all_team_names
+                )
+            )
+        ),
         Prefetch(
             'home_team__teamname_set',
             queryset=all_team_names
@@ -120,7 +143,7 @@ def get_monthly_games_for_team_this_season(team_id, month):
         Prefetch(
             'visitor_team__teamname_set',
             queryset=all_team_names
-        )
+        ),
     ).filter(
         Q(home_team=team) | Q(visitor_team=team),
         Q(game_date_est__month=month)
@@ -129,6 +152,12 @@ def get_monthly_games_for_team_this_season(team_id, month):
     serializer = GameSerializer(
         games,
         many=True,
+        fields_exclude=[
+            'home_team_statistics',
+            'visitor_team_statistics',
+            'home_team_player_statistics',
+            'visitor_team_player_statistics'
+        ],
         context={
             'linescore': {
                 'fields_exclude': ['id', 'game']
@@ -196,16 +225,17 @@ def get_team_season_stats(year, team_id):
     return ranking
 
 def get_player_last_n_games_log(player_id, n=5):
-    player_games_data = PlayerGameLogs(
-        season_nullable='2023-24',
-        player_id_nullable=player_id,
-        last_n_games_nullable=n,
-    ).get_dict()['resultSets'][0]
+    stats = PlayerStatistics.objects.filter(
+        player__id=player_id
+    ).select_related(
+        'player',
+        'game__visitor_team',
+        'team'
+    ).order_by(
+        '-game__game_date_est'
+    )[:n]
 
-    headers = player_games_data['headers']
-    player_games_data = player_games_data['rowSet']
-
-    return [dict(zip(headers, game)) for game in player_games_data[:n]]
+    return stats
 
 def get_last_n_games_log(team_id, n=5):
     if n < 1 or n > 82:
@@ -301,64 +331,39 @@ def get_last_n_games_log(team_id, n=5):
 
 def get_player_career_stats(player_id):
     ## Get the team players from nba_api
-    career_stats = PlayerCareerStats(
-        player_id=player_id,
-        per_mode36='PerGame'
-    ).get_dict()['resultSets'][0]
+    career_stats = PlayerCareerStatistics.objects.select_related('player', 'team').filter(
+        player__id=player_id
+    )
 
-    headers = career_stats['headers']
-    stats = career_stats['rowSet']
-
-    return [dict(zip(headers, season_stats)) for season_stats in stats]
+    return career_stats
 
 def get_player_current_season_stats(player_id, team_id):
-    ## Get the team players from nba_api
-    career_stats_raw_data = PlayerCareerStats(
-        player_id=player_id,
-        per_mode36='PerGame'
-    ).get_dict()['resultSets'][0]
-
-    headers = career_stats_raw_data['headers']
-    stats = career_stats_raw_data['rowSet']
-
-    career_stats = [dict(zip(headers, season_stats)) for season_stats in stats]
     current_season = settings.SEASON_YEAR 
 
-    for season in career_stats:
-        if season['SEASON_ID'] == current_season:
-            return season
-
-    ## If the player has no stats for the current season    
-    team = None
-    try:
-        team = Team.objects.get(id=team_id)
-    except Team.DoesNotExist:
-        raise ValueError('Invalid team_id')
-
-    return create_empty_player_season_stats(
-        player_id=player_id,
-        player_age=None,
-        team_abbreviation=team.symbol,
-        team_id=team_id,
+    career_stats = PlayerCareerStatistics.objects.select_related('player', 'team').filter(
+        player__id=player_id,
+        season_id=current_season
     )
+
+    if not career_stats.exists():
+        return create_empty_player_season_stats()
+
+    serializer = PlayerCareerStatisticsSerializer(
+        career_stats.first(),
+        fields_exclude=['player', 'team', 'team_data'],
+    )
+    
+    return serializer.data
 
 def get_team_players(team_id):
     try:
         Team.objects.get(id=team_id)
     except Team.DoesNotExist:
         raise ValueError('Invalid team_id')
-    
-    ## Get the team players from nba_api
-    team_players = PlayerIndex(
-        team_id_nullable=team_id,
-        season=settings.SEASON_YEAR,
-        league_id='00'
-    ).get_dict()['resultSets'][0]
 
-    headers = team_players['headers']
-    players = team_players['rowSet']
-
-    return [dict(zip(headers, player)) for player in players]
+    return Player.objects.filter(
+        team__id=team_id
+    ).prefetch_related('team__teamname_set').all()
 
 def register_games_for_the_current_season():
     # extract data from the certain date to certain date
@@ -388,16 +393,24 @@ def register_games_for_the_current_season():
 
             try:
                 home_team = Team.objects.get(id=game_data['HOME_TEAM_ID'])
+                print(f'Home team: {home_team.symbol}')
                 visitor_team = Team.objects.get(id=game_data['VISITOR_TEAM_ID'])
+                print(f'Visitor team: {visitor_team.symbol}')
             except Team.DoesNotExist:
                 continue
+
+            if home_team.symbol == visitor_team.symbol:
+                raise ValueError('Home team and visitor team are the same')
             
             ## create a datetime object from the string date and time, with the timezone set to EST
             datetime_obj = datetime.fromisoformat(game_data['GAME_DATE_EST'])
 
             timezone = pytz.timezone('US/Eastern')
-            hour, minute = calculate_time(game_data['GAME_STATUS_TEXT'])
-            datetime_obj = datetime_obj.replace(hour=hour, minute=minute, tzinfo=timezone)
+            try:
+                hour, minute = calculate_time(game_data['GAME_STATUS_TEXT'])
+                datetime_obj = datetime_obj.replace(hour=hour, minute=minute, tzinfo=timezone)
+            except IndexError:
+                pass 
 
             game_instance = Game(
                 game_id=game_data['GAME_ID'],
@@ -429,5 +442,10 @@ def register_games_for_the_current_season():
                 game=game_instance,
                 team=visitor_team,
             )
+
+            LineScore.objects.filter(game=game_instance, team=home_team).get()
+            LineScore.objects.filter(game=game_instance, team=visitor_team).get()
+
+            print(f"Game {game_instance.game_id} created")
 
         current_date += timedelta(days=1)

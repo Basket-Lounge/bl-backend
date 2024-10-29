@@ -18,41 +18,70 @@ def convert_month_string_to_int(month):
 
     return months.get(month.lower(), None)
 
+'''
+class PlayerCareerStatistics(models.Model):
+    player = models.ForeignKey(Player, on_delete=models.CASCADE)
+    team = models.ForeignKey(
+        'teams.Team',
+        on_delete=models.CASCADE, 
+        default=None, 
+        null=True
+    )
+    season_id = models.CharField(max_length=20)
+    player_age = models.FloatField()
+    games_played = models.IntegerField()
+    games_started = models.IntegerField()
+    minutes = models.FloatField()  # Renamed from 'min' to 'minutes' to avoid conflict with the built-in 'min' function
+    field_goals_made = models.FloatField()
+    field_goals_attempted = models.FloatField()
+    field_goals_percentage = models.FloatField()
+    three_point_field_goals_made = models.FloatField()
+    three_point_field_goals_attempted = models.FloatField()
+    three_point_field_goals_percentage = models.FloatField()
+    free_throws_made = models.FloatField()
+    free_throws_attempted = models.FloatField()
+    free_throws_percentage = models.FloatField()
+    rebounds_offensive = models.FloatField()
+    rebounds_defensive = models.FloatField()
+    rebounds_total = models.FloatField()
+    assists = models.FloatField()
+    steals = models.FloatField()
+    blocks = models.FloatField()
+    turnovers = models.FloatField()
+    personal_fouls = models.FloatField()
+    points = models.FloatField()
 
-def create_empty_player_season_stats(
-    team_abbreviation, 
-    team_id,
-    player_age,
-    player_id,
-):
+    class Meta:
+        unique_together = ('player', 'season_id', 'team')  # Ensures unique records for a player-season-team combination
+
+    def __str__(self):
+        return f"{self.player.first_name} {self.player.last_name} - {self.season_id}"
+
+'''
+
+def create_empty_player_season_stats():
     return {
-        "PLAYER_ID": player_id,
-        "SEASON_ID": settings.SEASON_YEAR,
-        "LEAGUE_ID": "00",
-        "TEAM_ID": int(team_id),
-        "TEAM_ABBREVIATION": team_abbreviation,
-        "PLAYER_AGE": player_age,
-        "GP": 0,
-        "GS": 0,
-        "MIN": 0.0,
-        "FGM": 0.0,
-        "FGA": 0.0,
-        "FG_PCT": 0.0,
-        "FG3M": 0.0,
-        "FG3A": 0.0,
-        "FG3_PCT": 0.0,
-        "FTM": 0.0,
-        "FTA": 0.0,
-        "FT_PCT": 0.0,
-        "OREB": 0.0,
-        "DREB": 0.0,
-        "REB": 0.0,
-        "AST": 0.0,
-        "STL": 0.0,
-        "BLK": 0.0,
-        "TOV": 0.0,
-        "PF": 0.0,
-        "PTS": 0.0
+        "games_played": 0,
+        "games_started": 0,
+        "minutes": 0.0,
+        "field_goals_made": 0.0,
+        "field_goals_attempted": 0.0,
+        "field_goals_percentage": 0.0,
+        "three_point_field_goals_made": 0.0,
+        "three_point_field_goals_attempted": 0.0,
+        "three_point_field_goals_percentage": 0.0,
+        "free_throws_made": 0.0,
+        "free_throws_attempted": 0.0,
+        "free_throws_percentage": 0.0,
+        "rebounds_offensive": 0.0,
+        "rebounds_defensive": 0.0,
+        "rebounds_total": 0.0,
+        "assists": 0.0,
+        "steals": 0.0,
+        "blocks": 0.0,
+        "turnovers": 0.0,
+        "personal_fouls": 0.0,
+        "points": 0.0,
     }
 
 def calculate_time(time_str):
