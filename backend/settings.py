@@ -37,10 +37,10 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'players.apps.PlayersConfig',
     'teams.apps.TeamsConfig',
     'games.apps.GamesConfig',
     'management.apps.ManagementConfig',
-    'players.apps.PlayersConfig',
     'api.apps.ApiConfig',
     'users.apps.UsersConfig',
     'django.contrib.admin',
@@ -190,7 +190,7 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'users.authentication.CookieJWTAccessAuthentication',
         'dj_rest_auth.jwt_auth.JWTCookieAuthentication',
-    )
+    ),
 }
 
 REST_AUTH = {
@@ -254,6 +254,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/3"),
         "options": {"queue": "today_game_update"},
     },
+    "update_teams_roster": {
+        "task": "teams.tasks.update_teams_roster",
+        "schedule": crontab(minute=0, hour=5),
+        "options": {"queue": "low_priority"},
+    }
 }
 
 ## Cache settings
@@ -263,3 +268,6 @@ CACHES = {
         "LOCATION": "redis://127.0.0.1:6379",
     }
 }
+
+## Websocket settings
+CENTRIFUGO_API_KEY = env.str('CENTRIFUGO_API_KEY')
