@@ -4,6 +4,7 @@ import pytz
 from games.models import Game, LineScore, TeamStatistics
 
 from django.db.models import Prefetch
+from django.db import transaction
 
 from players.models import Player, PlayerStatistics
 from teams.models import TeamName
@@ -82,148 +83,222 @@ def update_live_scores(
     players,
     statistics
 ):
-    team_linescore = LineScore.objects.get(game=game, team=team)
-    for index in range(len(linescore)):
-        if index == 0:
-            team_linescore.pts_qtr1 = linescore[index]['score']
-        elif index == 1:
-            team_linescore.pts_qtr2 = linescore[index]['score']
-        elif index == 2:
-            team_linescore.pts_qtr3 = linescore[index]['score']
-        elif index == 3:
-            team_linescore.pts_qtr4 = linescore[index]['score']
-        elif index == 4:
-            team_linescore.pts_ot1 = linescore[index]['score']
-        elif index == 5:
-            team_linescore.pts_ot2 = linescore[index]['score']
-        elif index == 6:
-            team_linescore.pts_ot3 = linescore[index]['score']
-        elif index == 7:
-            team_linescore.pts_ot4 = linescore[index]['score']
-        elif index == 8:
-            team_linescore.pts_ot5 = linescore[index]['score']
-        elif index == 9:
-            team_linescore.pts_ot6 = linescore[index]['score']
-        elif index == 10:
-            team_linescore.pts_ot7 = linescore[index]['score']
-        elif index == 11:
-            team_linescore.pts_ot8 = linescore[index]['score']
-        elif index == 12:
-            team_linescore.pts_ot9 = linescore[index]['score']
-        elif index == 13:
-            team_linescore.pts_ot10 = linescore[index]['score']
-    
-    team_linescore.save()
+    with transaction.atomic():
+        team_linescore = LineScore.objects.get(game=game, team=team)
+        for index in range(len(linescore)):
+            if index == 0:
+                team_linescore.pts_qtr1 = linescore[index]['score']
+            elif index == 1:
+                team_linescore.pts_qtr2 = linescore[index]['score']
+            elif index == 2:
+                team_linescore.pts_qtr3 = linescore[index]['score']
+            elif index == 3:
+                team_linescore.pts_qtr4 = linescore[index]['score']
+            elif index == 4:
+                team_linescore.pts_ot1 = linescore[index]['score']
+            elif index == 5:
+                team_linescore.pts_ot2 = linescore[index]['score']
+            elif index == 6:
+                team_linescore.pts_ot3 = linescore[index]['score']
+            elif index == 7:
+                team_linescore.pts_ot4 = linescore[index]['score']
+            elif index == 8:
+                team_linescore.pts_ot5 = linescore[index]['score']
+            elif index == 9:
+                team_linescore.pts_ot6 = linescore[index]['score']
+            elif index == 10:
+                team_linescore.pts_ot7 = linescore[index]['score']
+            elif index == 11:
+                team_linescore.pts_ot8 = linescore[index]['score']
+            elif index == 12:
+                team_linescore.pts_ot9 = linescore[index]['score']
+            elif index == 13:
+                team_linescore.pts_ot10 = linescore[index]['score']
+        
+        team_linescore.save()
 
-    team_statistics, created = TeamStatistics.objects.update_or_create(
+        TeamStatistics.objects.update_or_create(
+            team=team,
+            game=game,
+            defaults={
+                'assists': statistics.get('assists', 0),
+                'assists_turnover_ratio': statistics.get('assistsTurnoverRatio', 0),
+                'bench_points': statistics.get('benchPoints', 0),
+                'biggest_lead': statistics.get('biggestLead', 0),
+                'biggest_lead_score': statistics.get('biggestLeadScore', '0-0'),
+                'biggest_scoring_run': statistics.get('biggestScoringRun', 0),
+                'biggest_scoring_run_score': statistics.get('biggestScoringRunScore', '0-0'),
+                'blocks': statistics.get('blocks', 0),
+                'blocks_received': statistics.get('blocksReceived', 0),
+                'fast_break_points_attempted': statistics.get('fastBreakPointsAttempted', 0),
+                'fast_break_points_made': statistics.get('fastBreakPointsMade', 0),
+                'fast_break_points_percentage': statistics.get('fastBreakPointsPercentage', 0),
+                'field_goals_attempted': statistics.get('fieldGoalsAttempted', 0),
+                'field_goals_effective_adjusted': statistics.get('fieldGoalsEffectiveAdjusted', 0),
+                'field_goals_made': statistics.get('fieldGoalsMade', 0),
+                'field_goals_percentage': statistics.get('fieldGoalsPercentage', 0),
+                'fouls_offensive': statistics.get('foulsOffensive', 0),
+                'fouls_drawn': statistics.get('foulsDrawn', 0),
+                'fouls_personal': statistics.get('foulsPersonal', 0),
+                'fouls_team': statistics.get('foulsTeam', 0),
+                'fouls_technical': statistics.get('foulsTechnical', 0),
+                'fouls_team_technical': statistics.get('foulsTeamTechnical', 0),
+                'free_throws_attempted': statistics.get('freeThrowsAttempted', 0),
+                'free_throws_made': statistics.get('freeThrowsMade', 0),
+                'free_throws_percentage': statistics.get('freeThrowsPercentage', 0),
+                'lead_changes': statistics.get('leadChanges', 0),
+                'minutes': statistics.get('minutes', 'PT0M00.000S'),
+                'points': statistics.get('points', 0),
+                'points_against': statistics.get('pointsAgainst', 0),
+                'points_fast_break': statistics.get('pointsFastBreak', 0),
+                'points_from_turnovers': statistics.get('pointsFromTurnovers', 0),
+                'points_in_the_paint': statistics.get('pointsInThePaint', 0),
+                'points_in_the_paint_attempted': statistics.get('pointsInThePaintAttempted', 0),
+                'points_in_the_paint_made': statistics.get('pointsInThePaintMade', 0),
+                'points_in_the_paint_percentage': statistics.get('pointsInThePaintPercentage', 0),
+                'points_second_chance': statistics.get('pointsSecondChance', 0),
+                'rebounds_defensive': statistics.get('reboundsDefensive', 0),
+                'rebounds_offensive': statistics.get('reboundsOffensive', 0),
+                'rebounds_personal': statistics.get('reboundsPersonal', 0),
+                'rebounds_team': statistics.get('reboundsTeam', 0),
+                'rebounds_team_defensive': statistics.get('reboundsTeamDefensive', 0),
+                'rebounds_team_offensive': statistics.get('reboundsTeamOffensive', 0),
+                'rebounds_total': statistics.get('reboundsTotal', 0),
+                'second_chance_points_attempted': statistics.get('secondChancePointsAttempted', 0),
+                'second_chance_points_made': statistics.get('secondChancePointsMade', 0),
+                'second_chance_points_percentage': statistics.get('secondChancePointsPercentage', 0),
+                'steals': statistics.get('steals', 0),
+                'three_pointers_attempted': statistics.get('threePointersAttempted', 0),
+                'three_pointers_made': statistics.get('threePointersMade', 0),
+                'three_pointers_percentage': statistics.get('threePointersPercentage', 0),
+                'time_leading': statistics.get('timeLeading', 'PT0M00.000S'),
+                'times_tied': statistics.get('timesTied', 0),
+                'true_shooting_attempts': statistics.get('trueShootingAttempts', 0),
+                'true_shooting_percentage': statistics.get('trueShootingPercentage', 0),
+                'turnovers': statistics.get('turnovers', 0),
+                'turnovers_team': statistics.get('turnoversTeam', 0),
+                'turnovers_total': statistics.get('turnoversTotal', 0),
+                'two_pointers_attempted': statistics.get('twoPointersAttempted', 0),
+                'two_pointers_made': statistics.get('twoPointersMade', 0),
+                'two_pointers_percentage': statistics.get('twoPointersPercentage', 0)
+            }
+        )
+
+        for player in players:
+            try:
+                player_obj = Player.objects.get(id=player['personId'])
+            except Player.DoesNotExist:
+                continue
+
+            PlayerStatistics.objects.update_or_create(
+                player=player_obj,
+                game=game,
+                team=team,
+                defaults={
+                    'status': player['status'],
+                    'order': player['order'],
+                    'position': player.get('position', None),
+                    'starter': player['starter'],
+                    'assists': player['statistics']['assists'],
+                    'blocks': player['statistics']['blocks'],
+                    'blocks_received': player['statistics']['blocksReceived'],
+                    'field_goals_attempted': player['statistics']['fieldGoalsAttempted'],
+                    'field_goals_made': player['statistics']['fieldGoalsMade'],
+                    'field_goals_percentage': player['statistics']['fieldGoalsPercentage'],
+                    'fouls_offensive': player['statistics']['foulsOffensive'],
+                    'fouls_drawn': player['statistics']['foulsDrawn'],
+                    'fouls_personal': player['statistics']['foulsPersonal'],
+                    'fouls_technical': player['statistics']['foulsTechnical'],
+                    'free_throws_attempted': player['statistics']['freeThrowsAttempted'],
+                    'free_throws_made': player['statistics']['freeThrowsMade'],
+                    'free_throws_percentage': player['statistics']['freeThrowsPercentage'],
+                    'minus': player['statistics']['minus'],
+                    'minutes': player['statistics']['minutes'],
+                    'plus': player['statistics']['plus'],
+                    'plus_minus_points': player['statistics']['plusMinusPoints'],
+                    'points': player['statistics']['points'],
+                    'points_fast_break': player['statistics']['pointsFastBreak'],
+                    'points_in_the_paint': player['statistics']['pointsInThePaint'],
+                    'points_second_chance': player['statistics']['pointsSecondChance'],
+                    'rebounds_defensive': player['statistics']['reboundsDefensive'],
+                    'rebounds_offensive': player['statistics']['reboundsOffensive'],
+                    'rebounds_total': player['statistics']['reboundsTotal'],
+                    'steals': player['statistics']['steals'],
+                    'three_pointers_attempted': player['statistics']['threePointersAttempted'],
+                    'three_pointers_made': player['statistics']['threePointersMade'],
+                    'three_pointers_percentage': player['statistics']['threePointersPercentage'],
+                    'turnovers': player['statistics']['turnovers'],
+                    'two_pointers_attempted': player['statistics']['twoPointersAttempted'],
+                    'two_pointers_made': player['statistics']['twoPointersMade'],
+                    'two_pointers_percentage': player['statistics']['twoPointersPercentage']
+                }
+            )
+
+
+def update_team_statistics(game, team, statistics):
+    TeamStatistics.objects.update_or_create(
         team=team,
         game=game,
         defaults={
-            'assists': statistics['assists'],
-            'assists_turnover_ratio': statistics['assistsTurnoverRatio'],
-            'bench_points': statistics['benchPoints'],
-            'biggest_lead': statistics['biggestLead'],
-            'biggest_lead_score': statistics['biggestLeadScore'],
-            'biggest_scoring_run': statistics['biggestScoringRun'],
-            'biggest_scoring_run_score': statistics['biggestScoringRunScore'],
-            'blocks': statistics['blocks'],
-            'blocks_received': statistics['blocksReceived'],
-            'fast_break_points_attempted': statistics['fastBreakPointsAttempted'],
-            'fast_break_points_made': statistics['fastBreakPointsMade'],
-            'fast_break_points_percentage': statistics['fastBreakPointsPercentage'],
-            'field_goals_attempted': statistics['fieldGoalsAttempted'],
-            'field_goals_effective_adjusted': statistics['fieldGoalsEffectiveAdjusted'],
-            'field_goals_made': statistics['fieldGoalsMade'],
-            'field_goals_percentage': statistics['fieldGoalsPercentage'],
-            'fouls_offensive': statistics['foulsOffensive'],
-            'fouls_drawn': statistics['foulsDrawn'],
-            'fouls_personal': statistics['foulsPersonal'],
-            'fouls_team': statistics['foulsTeam'],
-            'fouls_technical': statistics['foulsTechnical'],
-            'fouls_team_technical': statistics['foulsTeamTechnical'],
-            'free_throws_attempted': statistics['freeThrowsAttempted'],
-            'free_throws_made': statistics['freeThrowsMade'],
-            'free_throws_percentage': statistics['freeThrowsPercentage'],
-            'lead_changes': statistics['leadChanges'],
-            'minutes': statistics['minutes'],
-            'points': statistics['points'],
-            'points_against': statistics['pointsAgainst'],
-            'points_fast_break': statistics['pointsFastBreak'],
-            'points_from_turnovers': statistics['pointsFromTurnovers'],
-            'points_in_the_paint': statistics['pointsInThePaint'],
-            'points_in_the_paint_attempted': statistics['pointsInThePaintAttempted'],
-            'points_in_the_paint_made': statistics['pointsInThePaintMade'],
-            'points_in_the_paint_percentage': statistics['pointsInThePaintPercentage'],
-            'points_second_chance': statistics['pointsSecondChance'],
-            'rebounds_defensive': statistics['reboundsDefensive'],
-            'rebounds_offensive': statistics['reboundsOffensive'],
-            'rebounds_personal': statistics['reboundsPersonal'],
-            'rebounds_team': statistics['reboundsTeam'],
-            'rebounds_team_defensive': statistics['reboundsTeamDefensive'],
-            'rebounds_team_offensive': statistics['reboundsTeamOffensive'],
-            'rebounds_total': statistics['reboundsTotal'],
-            'second_chance_points_attempted': statistics['secondChancePointsAttempted'],
-            'second_chance_points_made': statistics['secondChancePointsMade'],
-            'second_chance_points_percentage': statistics['secondChancePointsPercentage'],
-            'steals': statistics['steals'],
-            'three_pointers_attempted': statistics['threePointersAttempted'],
-            'three_pointers_made': statistics['threePointersMade'],
-            'three_pointers_percentage': statistics['threePointersPercentage'],
-            'time_leading': statistics['timeLeading'],
-            'times_tied': statistics['timesTied'],
-            'true_shooting_attempts': statistics['trueShootingAttempts'],
-            'true_shooting_percentage': statistics['trueShootingPercentage'],
-            'turnovers': statistics['turnovers'],
-            'turnovers_team': statistics['turnoversTeam'],
-            'turnovers_total': statistics['turnoversTotal'],
-            'two_pointers_attempted': statistics['twoPointersAttempted'],
-            'two_pointers_made': statistics['twoPointersMade'],
-            'two_pointers_percentage': statistics['twoPointersPercentage']
+            'assists': statistics.get('assists', 0),
+            'assists_turnover_ratio': statistics.get('assistsTurnoverRatio', 0),
+            'bench_points': statistics.get('benchPoints', 0),
+            'biggest_lead': statistics.get('biggestLead', 0),
+            'biggest_lead_score': statistics.get('biggestLeadScore', '0-0'),
+            'biggest_scoring_run': statistics.get('biggestScoringRun', 0),
+            'biggest_scoring_run_score': statistics.get('biggestScoringRunScore', '0-0'),
+            'blocks': statistics.get('blocks', 0),
+            'blocks_received': statistics.get('blocksReceived', 0),
+            'fast_break_points_attempted': statistics.get('fastBreakPointsAttempted', 0),
+            'fast_break_points_made': statistics.get('fastBreakPointsMade', 0),
+            'fast_break_points_percentage': statistics.get('fastBreakPointsPercentage', 0),
+            'field_goals_attempted': statistics.get('fieldGoalsAttempted', 0),
+            'field_goals_effective_adjusted': statistics.get('fieldGoalsEffectiveAdjusted', 0),
+            'field_goals_made': statistics.get('fieldGoalsMade', 0),
+            'field_goals_percentage': statistics.get('fieldGoalsPercentage', 0),
+            'fouls_offensive': statistics.get('foulsOffensive', 0),
+            'fouls_drawn': statistics.get('foulsDrawn', 0),
+            'fouls_personal': statistics.get('foulsPersonal', 0),
+            'fouls_team': statistics.get('foulsTeam', 0),
+            'fouls_technical': statistics.get('foulsTechnical', 0),
+            'fouls_team_technical': statistics.get('foulsTeamTechnical', 0),
+            'free_throws_attempted': statistics.get('freeThrowsAttempted', 0),
+            'free_throws_made': statistics.get('freeThrowsMade', 0),
+            'free_throws_percentage': statistics.get('freeThrowsPercentage', 0),
+            'lead_changes': statistics.get('leadChanges', 0),
+            'minutes': statistics.get('minutes', 'PT0M00.000S'),
+            'points': statistics.get('points', 0),
+            'points_against': statistics.get('pointsAgainst', 0),
+            'points_fast_break': statistics.get('pointsFastBreak', 0),
+            'points_from_turnovers': statistics.get('pointsFromTurnovers', 0),
+            'points_in_the_paint': statistics.get('pointsInThePaint', 0),
+            'points_in_the_paint_attempted': statistics.get('pointsInThePaintAttempted', 0),
+            'points_in_the_paint_made': statistics.get('pointsInThePaintMade', 0),
+            'points_in_the_paint_percentage': statistics.get('pointsInThePaintPercentage', 0),
+            'points_second_chance': statistics.get('pointsSecondChance', 0),
+            'rebounds_defensive': statistics.get('reboundsDefensive', 0),
+            'rebounds_offensive': statistics.get('reboundsOffensive', 0),
+            'rebounds_personal': statistics.get('reboundsPersonal', 0),
+            'rebounds_team': statistics.get('reboundsTeam', 0),
+            'rebounds_team_defensive': statistics.get('reboundsTeamDefensive', 0),
+            'rebounds_team_offensive': statistics.get('reboundsTeamOffensive', 0),
+            'rebounds_total': statistics.get('reboundsTotal', 0),
+            'second_chance_points_attempted': statistics.get('secondChancePointsAttempted', 0),
+            'second_chance_points_made': statistics.get('secondChancePointsMade', 0),
+            'second_chance_points_percentage': statistics.get('secondChancePointsPercentage', 0),
+            'steals': statistics.get('steals', 0),
+            'three_pointers_attempted': statistics.get('threePointersAttempted', 0),
+            'three_pointers_made': statistics.get('threePointersMade', 0),
+            'three_pointers_percentage': statistics.get('threePointersPercentage', 0),
+            'time_leading': statistics.get('timeLeading', 'PT0M00.000S'),
+            'times_tied': statistics.get('timesTied', 0),
+            'true_shooting_attempts': statistics.get('trueShootingAttempts', 0),
+            'true_shooting_percentage': statistics.get('trueShootingPercentage', 0),
+            'turnovers': statistics.get('turnovers', 0),
+            'turnovers_team': statistics.get('turnoversTeam', 0),
+            'turnovers_total': statistics.get('turnoversTotal', 0),
+            'two_pointers_attempted': statistics.get('twoPointersAttempted', 0),
+            'two_pointers_made': statistics.get('twoPointersMade', 0),
+            'two_pointers_percentage': statistics.get('twoPointersPercentage', 0)
         }
     )
-
-    for player in players:
-        print(player)
-        player_stat, created = PlayerStatistics.objects.update_or_create(
-            player=Player.objects.get(id=player['personId']),
-            game=game,
-            team=game.home_team,
-            defaults={
-                'status': player['status'],
-                'order': player['order'],
-                'position': player.get('position', None),
-                'starter': player['starter'],
-                'assists': player['statistics']['assists'],
-                'blocks': player['statistics']['blocks'],
-                'blocks_received': player['statistics']['blocksReceived'],
-                'field_goals_attempted': player['statistics']['fieldGoalsAttempted'],
-                'field_goals_made': player['statistics']['fieldGoalsMade'],
-                'field_goals_percentage': player['statistics']['fieldGoalsPercentage'],
-                'fouls_offensive': player['statistics']['foulsOffensive'],
-                'fouls_drawn': player['statistics']['foulsDrawn'],
-                'fouls_personal': player['statistics']['foulsPersonal'],
-                'fouls_technical': player['statistics']['foulsTechnical'],
-                'free_throws_attempted': player['statistics']['freeThrowsAttempted'],
-                'free_throws_made': player['statistics']['freeThrowsMade'],
-                'free_throws_percentage': player['statistics']['freeThrowsPercentage'],
-                'minus': player['statistics']['minus'],
-                'minutes': player['statistics']['minutes'],
-                'plus': player['statistics']['plus'],
-                'plus_minus_points': player['statistics']['plusMinusPoints'],
-                'points': player['statistics']['points'],
-                'points_fast_break': player['statistics']['pointsFastBreak'],
-                'points_in_the_paint': player['statistics']['pointsInThePaint'],
-                'points_second_chance': player['statistics']['pointsSecondChance'],
-                'rebounds_defensive': player['statistics']['reboundsDefensive'],
-                'rebounds_offensive': player['statistics']['reboundsOffensive'],
-                'rebounds_total': player['statistics']['reboundsTotal'],
-                'steals': player['statistics']['steals'],
-                'three_pointers_attempted': player['statistics']['threePointersAttempted'],
-                'three_pointers_made': player['statistics']['threePointersMade'],
-                'three_pointers_percentage': player['statistics']['threePointersPercentage'],
-                'turnovers': player['statistics']['turnovers'],
-                'two_pointers_attempted': player['statistics']['twoPointersAttempted'],
-                'two_pointers_made': player['statistics']['twoPointersMade'],
-                'two_pointers_percentage': player['statistics']['twoPointersPercentage']
-            }
-        )

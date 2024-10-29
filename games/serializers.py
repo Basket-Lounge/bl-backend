@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
 from games.models import Game, LineScore, TeamStatistics
-from players.models import PlayerStatistics
+from players.models import PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
 from teams.serializers import TeamSerializer
 
@@ -154,7 +154,7 @@ class TeamStatisticsSerializer(DynamicFieldsSerializerMixin, serializers.ModelSe
 
 class PlayerStatisticsSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     player = serializers.SerializerMethodField()
-    game = serializers.SerializerMethodField()
+    game_data = serializers.SerializerMethodField()
     team = serializers.SerializerMethodField()
     
     class Meta:
@@ -173,7 +173,7 @@ class PlayerStatisticsSerializer(DynamicFieldsSerializerMixin, serializers.Model
         )
         return serializer.data
     
-    def get_game(self, obj):
+    def get_game_data(self, obj):
         if not hasattr(obj, 'game'):
             return None
         
@@ -192,6 +192,40 @@ class PlayerStatisticsSerializer(DynamicFieldsSerializerMixin, serializers.Model
         context = self.context.get('team', {})
         serializer = TeamSerializer(
             obj.team, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+
+class PlayerCareerStatisticsSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    team_data = serializers.SerializerMethodField('get_team_data')
+    player = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PlayerCareerStatistics
+        fields = '__all__'
+
+    def get_team_data(self, obj):
+        if not hasattr(obj, 'team'):
+            return None
+
+        context = self.context.get('team', {})
+        serializer = TeamSerializer(
+            obj.team, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+
+    def get_player(self, obj):
+        if not hasattr(obj, 'player'):
+            return None
+        
+        context = self.context.get('player', {})
+        serializer = PlayerSerializer(
+            obj.player, 
             context=self.context,
             **context    
         )

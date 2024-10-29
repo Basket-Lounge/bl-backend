@@ -1,14 +1,23 @@
+from datetime import datetime
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.status import (
+    HTTP_201_CREATED, 
+    HTTP_400_BAD_REQUEST, 
+    HTTP_404_NOT_FOUND, 
+    HTTP_500_INTERNAL_SERVER_ERROR
+)
 
-from games.models import Game, LineScore
+from api.websocket import send_message_to_centrifuge
+from games.models import Game, GameChat, GameChatMessage, LineScore
 from games.serializers import GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
 from games.services import combine_game_and_linescores, combine_games_and_linescores, get_today_games
 from players.models import PlayerStatistics
+from users.utils import validate_websocket_subscription_token
 
 
 class GameViewSet(viewsets.ViewSet):
@@ -52,19 +61,33 @@ class GameViewSet(viewsets.ViewSet):
             'teamstatistics_set',
         ).get(game_id=pk)
 
+        game_fields_exclude = [
+            'line_scores',
+            'home_team_player_statistics',
+            'visitor_team_player_statistics'
+        ]
+
+        if game.game_status_id == 1:
+            game_fields_exclude.extend([
+                'home_team_statistics',
+                'visitor_team_statistics'
+            ])
+
+        game_serializer_context = {
+            'team': {'fields': ('id', 'symbol', 'teamname_set')},
+            'teamname': {'fields': ('name', 'language')},
+            'language': {'fields': ('name',)},
+        }
+
+        if game.game_status_id > 1:
+            game_serializer_context.update({
+                'teamstatistics': {'fields_exclude': ('game',)},
+            })
+
         serializer = GameSerializer(
             game,
-            fields_exclude=[
-                'line_scores',
-                'home_team_player_statistics',
-                'visitor_team_player_statistics'
-            ],
-            context={
-                'team': {'fields': ('id', 'symbol', 'teamname_set')},
-                'teamname': {'fields': ('name', 'language')},
-                'language': {'fields': ('name',)},
-                'teamstatistics': {'fields_exclude': ('game',)},
-            }
+            fields_exclude=game_fields_exclude,
+            context=game_serializer_context
         )
 
         linescores = LineScore.objects.filter(
@@ -106,7 +129,7 @@ class GameViewSet(viewsets.ViewSet):
         serializer = PlayerStatisticsSerializer(
             players_statistics,
             many=True,
-            fields_exclude=['game'],
+            fields_exclude=['game_data', 'game'],
             context={
                 'player': {'fields': ('id', 'first_name', 'last_name')},
                 'team': {'fields': ('id',)},
@@ -115,3 +138,61 @@ class GameViewSet(viewsets.ViewSet):
 
         return Response(serializer.data)
     
+    @action(detail=True, methods=['post'], url_path='chat')
+    def get_chat(self, request, pk=None):
+        channel = f'games/{pk}/live-chat'
+
+        subscription_token = request.data.get('subscription_token', None)
+        if subscription_token is None:
+            return Response(
+                {'error': 'Subscription token is required'}, 
+                status=HTTP_400_BAD_REQUEST
+            )
+        if not validate_websocket_subscription_token(
+            subscription_token, 
+            channel, 
+            request.user.id
+        ):
+            return Response(
+                {'error': 'Invalid subscription token'}, 
+                status=HTTP_400_BAD_REQUEST
+            )
+
+        message = request.data.get('message', None)
+        if message is None:
+            return Response(
+                {'error': 'Message is required'}, 
+                status=HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            game = Game.objects.get(game_id=pk)
+        except Game.DoesNotExist:
+            return Response(
+                {'error': 'Game not found'}, 
+                status=HTTP_404_NOT_FOUND
+            )
+        
+        resp_json = send_message_to_centrifuge(channel, {
+            'message': message,
+            'user': {
+                'id': request.user.id,
+                'username': request.user.get_username()
+            },
+            'game': game.game_id,
+            'created_at': int(datetime.now().timestamp())
+        })
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Message Delivery Unsuccessful'}, 
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        game_chat, created = GameChat.objects.get_or_create(game=game)
+        GameChatMessage.objects.create(
+            chat=game_chat,
+            message=message,
+            user=request.user
+        )
+
+        return Response(status=HTTP_201_CREATED)
