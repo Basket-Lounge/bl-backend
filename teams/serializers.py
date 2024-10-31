@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.models import PostStatus, PostStatusDisplayName, Team, TeamLike, TeamName, Language
+from teams.models import PostComment, PostCommentStatus, PostStatus, PostStatusDisplayName, Team, TeamLike, TeamName, Language
 
 
 class LanguageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -133,3 +133,17 @@ class PostStatusDisplayNameSerializer(DynamicFieldsSerializerMixin, serializers.
             **context    
         )
         return serializer.data
+    
+
+class PostCommentStatusSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    class Meta:
+        model = PostCommentStatus
+        fields = '__all__'
+
+class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    post_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    status_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PostComment

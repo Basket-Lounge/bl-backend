@@ -11,8 +11,8 @@ from dj_rest_auth.registration.serializers import SocialLoginSerializer
 from requests.exceptions import HTTPError
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.models import Post
-from teams.serializers import PostStatusSerializer, TeamLikeSerializer, TeamSerializer
+from teams.models import Post, PostComment, PostCommentReply, PostCommentReplyStatus
+from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamLikeSerializer, TeamSerializer
 from users.models import Role
 
 
@@ -163,6 +163,7 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     team_data = serializers.SerializerMethodField()
     user_data = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField()
+    comments_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -206,3 +207,117 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     
     def get_likes_count(self, obj):
         return obj.postlike_set.count()
+    
+    def get_comments_count(self, obj):
+        return obj.postcomment_set.count()
+    
+
+class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    post_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    status_data = serializers.SerializerMethodField()
+    replies_count = serializers.SerializerMethodField()
+    likes_count = serializers.SerializerMethodField()
+    liked = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PostComment
+        exclude = ('post', 'user', 'status')
+
+    def get_post_data(self, obj):
+        if not hasattr(obj, 'post'):
+            return None
+        
+        context = self.context.get('post', {})
+        serializer = PostSerializer(
+            obj.post, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_status_data(self, obj):
+        if not hasattr(obj, 'status'):
+            return None
+        
+        context = self.context.get('status', {})
+        serializer = PostCommentStatusSerializer(
+            obj.status, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_replies_count(self, obj):
+        return obj.postcommentreply_set.count()
+    
+    def get_likes_count(self, obj):
+        return obj.postcommentlike_set.count()
+    
+    def get_liked(self, obj):
+        return obj.liked
+    
+
+
+class PostCommentReplyStatusSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    class Meta:
+        model = PostCommentReplyStatus
+        fields = '__all__'
+    
+
+class PostCommentReplySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    post_comment_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    status_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PostCommentReply
+        exclude = ('post_comment', 'user', 'status')
+
+    def get_post_comment_data(self, obj):
+        if not hasattr(obj, 'post_comment'):
+            return None
+        
+        context = self.context.get('post_comment', {})
+        serializer = PostCommentSerializer(
+            obj.post_comment, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_status_data(self, obj):
+        if not hasattr(obj, 'status'):
+            return None
+        
+        context = self.context.get('status', {})
+        serializer = PostCommentReplyStatusSerializer(
+            obj.status, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data

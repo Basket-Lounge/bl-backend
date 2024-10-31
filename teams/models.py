@@ -115,6 +115,14 @@ class PostCommentStatus(models.Model):
     id = models.SmallAutoField(primary_key=True)
     name = models.CharField(max_length=128)
 
+    @staticmethod
+    def get_created_role():
+        return PostCommentStatus.objects.get(name='created')
+    
+    @staticmethod
+    def get_deleted_role():
+        return PostCommentStatus.objects.get(name='deleted')
+
     def __str__(self):
         return self.name
 
@@ -135,6 +143,7 @@ class PostComment(models.Model):
         return f'{self.id}'
 
 class PostCommentHide(models.Model):
+    '''This model is used to hide a post comment'''
     id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
@@ -168,6 +177,14 @@ class PostCommentReplyStatus(models.Model):
     id = models.SmallAutoField(primary_key=True)
     name = models.CharField(max_length=128)
 
+    @staticmethod
+    def get_created_role():
+        return PostCommentReplyStatus.objects.get(name='created')
+    
+    @staticmethod
+    def get_deleted_role():
+        return PostCommentReplyStatus.objects.get(name='deleted')
+
     def __str__(self):
         return self.name
 
@@ -177,7 +194,11 @@ class PostCommentReply(models.Model):
         default=uuid.uuid4, 
         editable=False
     )
-    status = models.ForeignKey(PostCommentReplyStatus, on_delete=models.PROTECT)
+    status = models.ForeignKey(
+        PostCommentReplyStatus, 
+        on_delete=models.PROTECT,
+        default=PostCommentReplyStatus.get_created_role
+    )
     post_comment = models.ForeignKey(PostComment, on_delete=models.CASCADE)
     user = models.ForeignKey('users.User', on_delete=models.CASCADE)
     content = models.TextField()

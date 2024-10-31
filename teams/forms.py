@@ -42,3 +42,14 @@ class TeamPostForm(forms.Form):
             return cleaned_data
 
         raise forms.ValidationError('Invalid data')
+    
+
+class TeamPostCommentForm(forms.Form):
+    content = forms.CharField()
+
+    def clean_content(self):
+        content = self.cleaned_data['content']
+        if len(content) < 1:
+            raise forms.ValidationError('Content is too short')
+
+        return content

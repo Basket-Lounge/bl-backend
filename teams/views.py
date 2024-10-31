@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db.models import Prefetch
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
+from django.db.models import Exists, OuterRef
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -9,12 +10,23 @@ from rest_framework.response import Response
 from rest_framework.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 from rest_framework.permissions import IsAuthenticated
 
-from api.paginators import CustomPageNumberPagination, LargeTablePaginator
+from api.paginators import CustomPageNumberPagination
 from games.serializers import PlayerStatisticsSerializer, PlayerCareerStatisticsSerializer
 from games.services import combine_games_and_linescores
 from players.serializers import PlayerSerializer
-from teams.forms import TeamPostForm
-from teams.models import Post, PostLike, PostStatus, PostStatusDisplayName, Team, TeamName
+from teams.forms import TeamPostCommentForm, TeamPostForm
+from teams.models import (
+    Post,
+    PostComment,
+    PostCommentLike,
+    PostCommentReply,
+    PostCommentStatus, 
+    PostLike, 
+    PostStatus, 
+    PostStatusDisplayName, 
+    Team, 
+    TeamName
+)
 from teams.serializers import PostStatusSerializer, TeamSerializer
 from teams.services import (
     get_all_games_for_team_this_season,
@@ -34,7 +46,7 @@ from users.authentication import CookieJWTAccessAuthentication
 
 from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
 
-from users.serializers import PostSerializer
+from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostSerializer
 
 
 # Create your views here.
@@ -45,6 +57,12 @@ class TeamViewSet(viewsets.ViewSet):
         permission_classes = []
 
         if self.action == 'post_team_post':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'post_comment':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'like_comment':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'unlike_comment':
             permission_classes = [IsAuthenticated]
 
         return [permission() for permission in permission_classes]
@@ -412,7 +430,11 @@ class TeamViewSet(viewsets.ViewSet):
             ).prefetch_related(
                 Prefetch(
                     'postlike_set',
-                    queryset=PostLike.objects.filter(post__team=team)
+                    queryset=PostLike.objects.filter(post__team=team).only('id')
+                ),
+                Prefetch(
+                    'postcomment_set',
+                    queryset=PostComment.objects.filter(post__team=team).only('id')
                 ),
                 Prefetch(
                     'status__poststatusdisplayname_set',
@@ -456,7 +478,341 @@ class TeamViewSet(viewsets.ViewSet):
         )
 
         return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments'
+    )
+    def get_comments(self, request, pk=None, post_id=None):
+        try:
+            team = Team.objects.get(id=pk)
+        except Team.DoesNotExist:
+            return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
+        
+        query = PostComment.objects.filter(
+            post__team=team, 
+            post__id=post_id
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.filter(post_comment__post__id=post_id).only('id')
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.filter(post_comment__post__id=post_id).only('id')
+            ),
+        ).select_related(
+            'user',
+            'status'
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name'
+        ).order_by('-created_at')
+
+        fields_exclude = ['post_data']
+
+        if request.user.is_authenticated:
+            query = query.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+        else:
+            fields_exclude.append('liked')
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(query, request)
+
+        serializer = PostCommentSerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
     
+    @get_comments.mapping.post
+    def post_comment(self, request, pk=None, post_id=None):
+        try:
+            team = Team.objects.get(id=pk)
+        except Team.DoesNotExist:
+            return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
+        
+        try:
+            post = Post.objects.get(team=team, id=post_id)
+        except Post.DoesNotExist:
+            return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
+
+        form = TeamPostCommentForm(request.data)
+        if not form.is_valid():
+            return Response(form.errors, status=HTTP_400_BAD_REQUEST)
+        
+        user = request.user
+        data = form.cleaned_data
+
+        PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.get_created_role(),
+            content=data['content']
+        )
+
+        return Response(
+            {'message': 'Comment created successfully!'}, 
+            status=HTTP_201_CREATED
+        )
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments/(?P<comment_id>[^/.]+)'
+    )
+    def get_comment(self, request, pk=None, post_id=None, comment_id=None):
+        try:
+            team = Team.objects.get(id=pk)
+        except Team.DoesNotExist:
+            return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
+        
+        try:
+            fields_exclude = ['post_data']
+
+            comment = PostComment.objects.select_related(
+                'user',
+                'status'
+            ).prefetch_related(
+                Prefetch(
+                    'postcommentlike_set',
+                    queryset=PostCommentLike.objects.filter(post_comment__post__id=post_id).only('id')
+                ),
+                Prefetch(
+                    'postcommentreply_set',
+                    queryset=PostCommentReply.objects.filter(post_comment__post__id=post_id).only('id')
+                ),
+            ).only(
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name'
+            )
+
+            if request.user.is_authenticated:
+                comment = comment.annotate(
+                    liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+                ).get(
+                    post__team=team,
+                    post__id=post_id,
+                    id=comment_id
+                )
+            else:
+                fields_exclude.append('liked')
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+
+        serializer = PostCommentSerializer(
+            comment,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                }
+            }
+        )
+
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments/(?P<comment_id>[^/.]+)/likes'
+    )
+    def like_comment(self, request, pk=None, post_id=None, comment_id=None):
+        try:
+            comment = PostComment.objects.get(
+                post__id=post_id, 
+                id=comment_id, 
+                post__team__id=pk
+            )
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        user = request.user
+        PostCommentLike.objects.get_or_create(
+            user=user,
+            post_comment=comment
+        )
+
+        try:
+            comment = PostComment.objects.filter(
+                post__team__id=pk,
+                post__id=post_id,
+                id=comment_id
+            ).annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=user, post_comment=OuterRef('pk')))
+            ).only('id').get()
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        serializer = PostCommentSerializer(
+            comment,
+            fields=['id', 'likes_count', 'liked']
+        )
+
+        return Response(serializer.data)
+    
+    @like_comment.mapping.delete
+    def unlike_comment(self, request, pk=None, post_id=None, comment_id=None):
+        user = request.user
+        try:
+            like = PostCommentLike.objects.get(user=user, post_comment__id=comment_id)
+            like.delete()
+        except PostCommentLike.DoesNotExist:
+            pass
+
+        try:
+            comment = PostComment.objects.filter(
+                post__team__id=pk,
+                post__id=post_id,
+                id=comment_id
+            ).annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=user, post_comment=OuterRef('pk')))
+            ).only('id').get()
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        serializer = PostCommentSerializer(
+            comment,
+            fields=['id', 'likes_count', 'liked']
+        )
+
+        return Response(serializer.data)
+    
+    @like_comment.mapping.get
+    def get_likes(self, request, pk=None, post_id=None, comment_id=None):
+        try:
+            comment = PostComment.objects.filter(
+                post__team__id=pk,
+                post__id=post_id,
+                id=comment_id
+            )
+
+            fields = ['id', 'likes_count']
+            if request.user.is_authenticated:
+                comment = comment.annotate(
+                    liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+                ).only('id').get()
+
+                fields.append('liked') 
+            else:
+                comment = comment.only('id').get()
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+
+        serializer = PostCommentSerializer(
+            comment,
+            fields=fields
+        )
+
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments/(?P<comment_id>[^/.]+)/replies'
+    )
+    def reply_comment(self, request, pk=None, post_id=None, comment_id=None):
+        try:
+            comment = PostComment.objects.get(
+                post__id=post_id, 
+                id=comment_id, 
+                post__team__id=pk
+            )
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        form = TeamPostCommentForm(request.data)
+        if not form.is_valid():
+            return Response(form.errors, status=HTTP_400_BAD_REQUEST)
+        
+        user = request.user
+        data = form.cleaned_data
+
+        PostCommentReply.objects.create(
+            user=user,
+            post_comment=comment,
+            content=data['content']
+        )
+
+        return Response(
+            {'message': 'Reply created successfully!'}, 
+            status=HTTP_201_CREATED
+        )
+    
+    @reply_comment.mapping.get
+    def get_replies(self, request, pk=None, post_id=None, comment_id=None):
+        try:
+            comment = PostComment.objects.get(
+                post__id=post_id, 
+                id=comment_id, 
+                post__team__id=pk
+            )
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        query = PostCommentReply.objects.filter(
+            post_comment=comment
+        ).select_related(
+            'user',
+            'status'
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name'
+        ).order_by('-created_at')
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(query, request)
+
+        serializer = PostCommentReplySerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=['post_comment_data'],
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+
 
 class TeamsPostViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='top-5')
