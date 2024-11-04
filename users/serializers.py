@@ -164,6 +164,7 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     user_data = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField()
     comments_count = serializers.SerializerMethodField()
+    liked = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -210,6 +211,9 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     
     def get_comments_count(self, obj):
         return obj.postcomment_set.count()
+    
+    def get_liked(self, obj):
+        return obj.liked
     
 
 class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):

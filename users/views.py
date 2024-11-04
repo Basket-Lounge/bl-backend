@@ -3,25 +3,50 @@ from datetime import datetime, timezone
 from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
+from django.db.models import Exists, OuterRef, Prefetch, Q
 
 from rest_framework.decorators import action
 from rest_framework.viewsets import ViewSet
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST
+from rest_framework.status import (
+    HTTP_200_OK, 
+    HTTP_201_CREATED, 
+    HTTP_400_BAD_REQUEST,
+    HTTP_404_NOT_FOUND
+)
 
-from teams.models import Team, TeamLike
+from api.paginators import CustomPageNumberPagination
+from teams.models import (
+    Post, 
+    PostComment, 
+    PostCommentLike, 
+    PostCommentReply, 
+    PostLike, 
+    PostStatusDisplayName, 
+    Team, 
+    TeamLike
+)
 from teams.serializers import TeamSerializer
-from users.authentication import CookieJWTRefreshAuthentication
+from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
 from users.models import User
-from users.serializers import CustomSocialLoginSerializer, UserSerializer
+from users.serializers import (
+    CustomSocialLoginSerializer, 
+    PostCommentSerializer, 
+    PostSerializer, 
+    UserSerializer
+)
 
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 from dj_rest_auth.registration.views import SocialLoginView
 
-from users.utils import calculate_level, generate_websocket_connection_token, generate_websocket_subscription_token
+from users.utils import (
+    calculate_level, 
+    generate_websocket_connection_token, 
+    generate_websocket_subscription_token
+)
 
 
 class CustomGoogleOAuth2Adapter(GoogleOAuth2Adapter):
@@ -50,10 +75,16 @@ class GoogleLoginView(SocialLoginView):
 
 
 class UserViewSet(ViewSet):
+    authentication_classes = [CookieJWTAccessAuthentication]
+
     def get_permissions(self):
         permission_classes = []
         if self.action == 'retrieve':
             permission_classes = [AllowAny]
+        elif self.action == 'post_favorite_team':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'delete_favorite_team':
+            permission_classes = [IsAuthenticated]
 
         return [permission() for permission in permission_classes]
     
@@ -151,6 +182,53 @@ class UserViewSet(ViewSet):
     
     @action(
         detail=False,
+        methods=['post'],
+        url_path=r'me/favorite-teams/(?P<team_id>[0-9a-f-]+)',
+        permission_classes=[IsAuthenticated]
+    )
+    def post_favorite_team(self, request, team_id):
+        user = request.user
+        TeamLike.objects.get_or_create(user=user, team=Team.objects.get(id=team_id))
+        
+        try:
+            team = Team.objects.filter(id=team_id).only('id', 'symbol').annotate(
+                liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
+            ).get()
+        except Team.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND, data={'error': 'Not exists'}) 
+        
+        serializer = TeamSerializer(
+            team,
+            fields_exclude=['teamname_set'],
+        )
+
+        return Response(status=HTTP_201_CREATED, data=serializer.data)
+    
+    @post_favorite_team.mapping.delete
+    def delete_favorite_team(self, request, team_id):
+        user = request.user
+
+        try:
+            TeamLike.objects.get(user=user, team__id=team_id).delete()
+        except TeamLike.DoesNotExist:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'Not exists'})
+        
+        try:
+            team = Team.objects.filter(id=team_id).only('id', 'symbol').annotate(
+                liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
+            ).get()
+        except Team.DoesNotExist:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'Not exists'})
+        
+        serializer = TeamSerializer(
+            team,
+            fields_exclude=['teamname_set'],
+        )
+
+        return Response(status=HTTP_200_OK, data=serializer.data)
+    
+    @action(
+        detail=False,
         methods=['put'],
         url_path=r'me/profile-visibility',
         permission_classes=[IsAuthenticated]
@@ -185,6 +263,143 @@ class UserViewSet(ViewSet):
 
         return Response(status=HTTP_201_CREATED)
     
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/posts',
+        permission_classes=[IsAuthenticated]
+    )
+    def get_posts(self, request):
+        user = request.user
+
+        fields_exclude = ['content']
+        posts = Post.objects.filter(user=user).order_by('-created_at').select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postlike_set',
+                queryset=PostLike.objects.filter(post__user=user)
+            ),
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        ).annotate(
+            liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+        )
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(posts, request)
+
+        serializer = PostSerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/comments',
+        permission_classes=[IsAuthenticated]
+    )
+    def get_comments(self, request):
+        user = request.user
+
+        query = PostComment.objects.filter(
+            user=user,
+        ).exclude(
+            Q(status__name='deleted') | Q(post__status__name='deleted')
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.filter(post_comment__user=user).only('id')
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.filter(post_comment__user=user).only('id')
+            ),
+        ).select_related(
+            'user',
+            'status',
+            'post__team',
+            'post__user'
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name',
+            'post__id',
+            'post__title',
+            'post__team__id',
+            'post__team__symbol',
+            'post__user__id',
+            'post__user__username'
+        ).order_by(
+            '-created_at'
+        ).annotate(
+            liked=Exists(PostCommentLike.objects.filter(user=user, post_comment=OuterRef('pk')))
+        )
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(query, request)
+
+        serializer = PostCommentSerializer(
+            paginated_data,
+            many=True,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                },
+                'post': {
+                    'fields': ('id', 'title', 'team_data', 'user_data')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+
 
 class JWTViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
