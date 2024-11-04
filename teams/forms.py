@@ -21,14 +21,14 @@ class TeamPostForm(forms.Form):
     def clean_title(self):
         title = self.cleaned_data['title']
         if len(title) < 5:
-            raise forms.ValidationError('Title is too short')
+            raise forms.ValidationError('제목이 너무 짧습니다. 5자 이상 입력해주세요.')
 
         return title
     
     def clean_content(self):
         content = self.cleaned_data['content']
         if len(content) < 1:
-            raise forms.ValidationError('Content is too short')
+            raise forms.ValidationError('내용이 너무 짧습니다. 1자 이상 입력해주세요.')
 
         return content
 

@@ -45,6 +45,8 @@ class TeamNameSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
 
 class TeamSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     teamname_set = serializers.SerializerMethodField()
+    likes_count = serializers.SerializerMethodField()
+    liked = serializers.SerializerMethodField()
 
     class Meta:
         model = Team
@@ -60,7 +62,13 @@ class TeamSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
             **context
         )
         return serializer.data
-
+    
+    def get_likes_count(self, obj):
+        return obj.teamlike_set.count()
+    
+    def get_liked(self, obj):
+        return obj.liked
+    
 
 class TeamLikeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     team = serializers.SerializerMethodField()
@@ -139,11 +147,3 @@ class PostCommentStatusSerializer(DynamicFieldsSerializerMixin, serializers.Mode
     class Meta:
         model = PostCommentStatus
         fields = '__all__'
-
-class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
-    post_data = serializers.SerializerMethodField()
-    user_data = serializers.SerializerMethodField()
-    status_data = serializers.SerializerMethodField()
-
-    class Meta:
-        model = PostComment
