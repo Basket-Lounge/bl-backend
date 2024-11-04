@@ -54,7 +54,9 @@ def update_game_score():
 
 def fix_game_score():
     gameDates = [
-        '2024-10-26',
+        '2024-11-01',
+        '2024-11-02',
+        '2024-11-03',
     ]
 
     for gameDate in gameDates:
