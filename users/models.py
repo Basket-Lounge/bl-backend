@@ -139,25 +139,43 @@ class Block(models.Model):
     class Meta:
         unique_together = ['user', 'blocked_user']
 
-class DirectMessage(models.Model):
+class UserChat(models.Model):
     id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
         editable=False
     )
-    sender = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
-        related_name='sender'
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.id}'
+    
+class UserChatParticipant(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False
     )
-    receiver = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
-        related_name='receiver'
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    chat = models.ForeignKey(UserChat, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f'{self.id}'
+    
+    class Meta:
+        unique_together = ['user', 'chat']
+
+class UserChatParticipantMessage(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False
     )
+    sender = models.ForeignKey(UserChatParticipant, on_delete=models.CASCADE)
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f'{self.sender} to {self.receiver}'
+        return f'{self.id}'

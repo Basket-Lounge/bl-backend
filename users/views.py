@@ -29,11 +29,13 @@ from teams.models import (
 )
 from teams.serializers import TeamSerializer
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
-from users.models import User
+from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.serializers import (
     CustomSocialLoginSerializer, 
     PostCommentSerializer, 
-    PostSerializer, 
+    PostSerializer,
+    UserChatParticipantMessageCreateSerializer,
+    UserChatSerializer, 
     UserSerializer
 )
 
@@ -91,45 +93,91 @@ class UserViewSet(ViewSet):
     @action(detail=False, methods=['get'], url_path='me')
     def me(self, request):
         user = request.user
-
         serializer = UserSerializer(
             user,
             fields=(
                 'username', 
                 'email', 
-                'role', 
-                'experience', 
+                'role',
+                'level',
                 'introduction', 
-                'is_profile_visible'
+                'is_profile_visible',
+                'likes_count'
             ),
         )
 
-        return Response({
-            'username': serializer.data['username'],
-            'email': serializer.data['email'],
-            'role': serializer.data['role'],
-            'introduction': serializer.data['introduction'],
-            'level': calculate_level(serializer.data['experience']),
-            'is_profile_visible': serializer.data['is_profile_visible']
-        })
+        return Response(serializer.data)
 
-    @method_decorator(cache_page(60*1))
     def retrieve(self, request, pk=None):
-        user = User.objects.select_related('role').only(
-            'username', 'email', 'role', 'experience'
-        ).get(id=pk)
+        fields = [
+            'username',
+            'role',
+            'level',
+            'introduction',
+            'is_profile_visible',
+            'likes_count'
+        ]
+
+        try:
+            user = User.objects.select_related('role').only(
+                'username', 'email', 'role', 'experience'
+            )
+
+            if request.user.is_authenticated:
+                user = user.annotate(
+                    liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+                ).get(id=pk)
+
+                fields.append('liked')
+            else:
+                user = user.get(id=pk)
+
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
 
         serializer = UserSerializer(
             user,
-            fields=('username', 'email', 'role', 'experience'),
+            fields=fields,
         )
 
-        return Response({
-            'username': serializer.data['username'],
-            'email': serializer.data['email'],
-            'role': serializer.data['role'],
-            'level': calculate_level(user.experience)
-        })
+        return Response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='favorite-teams',
+        permission_classes=[AllowAny]
+    )
+    def get_user_favorite_teams(self, request, pk=None):
+        try:
+            user = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        query = Team.objects.prefetch_related(
+            'teamname_set'
+        ).filter(
+            teamlike__user=user
+        ).order_by('symbol').only('id', 'symbol')
+
+        if not query.exists():
+            return Response([])
+
+        serializer = TeamSerializer(
+            query,
+            many=True,
+            fields=['id', 'symbol', 'teamname_set'],
+            context={
+                'teamname': {
+                    'fields': ['name', 'language']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
     
     @action(
         detail=False, 
@@ -264,6 +312,83 @@ class UserViewSet(ViewSet):
         return Response(status=HTTP_201_CREATED)
     
     @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'posts',
+        permission_classes=[AllowAny]
+    )
+    def get_user_posts(self, request, pk=None):
+        try:
+            user = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        fields_exclude = ['content']
+        posts = Post.objects.filter(user=user).order_by('-created_at').select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postlike_set',
+                queryset=PostLike.objects.filter(post__user=user)
+            ),
+            Prefetch(
+                'postcomment_set',
+                queryset=PostComment.objects.filter(post__user=user)
+            ),
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+        else:
+            fields_exclude.append('liked')
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(posts, request)
+
+        serializer = PostSerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+    
+    @action(
         detail=False,
         methods=['get'],
         url_path=r'me/posts',
@@ -281,6 +406,10 @@ class UserViewSet(ViewSet):
             Prefetch(
                 'postlike_set',
                 queryset=PostLike.objects.filter(post__user=user)
+            ),
+            Prefetch(
+                'postcomment_set',
+                queryset=PostComment.objects.filter(post__user=user)
             ),
             Prefetch(
                 'status__poststatusdisplayname_set',
@@ -327,6 +456,85 @@ class UserViewSet(ViewSet):
         )
 
         return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'comments',
+        permission_classes=[AllowAny]
+    )
+    def get_user_comments(self, request, pk=None):
+        try:
+            user = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        query = PostComment.objects.filter(
+            user=user,
+        ).exclude(
+            Q(status__name='deleted') | Q(post__status__name='deleted')
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.filter(post_comment__user=user)
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.filter(post_comment__user=user)
+            ),
+        ).select_related(
+            'user',
+            'status',
+            'post__team',
+            'post__user'
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name',
+            'post__id',
+            'post__title',
+            'post__team__id',
+            'post__team__symbol',
+            'post__user__id',
+            'post__user__username'
+        ).order_by(
+            '-created_at'
+        )
+
+        if request.user.is_authenticated:
+            query = query.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(query, request)
+
+        serializer = PostCommentSerializer(
+            paginated_data,
+            fields_exclude=['liked'] if not request.user.is_authenticated else [],
+            many=True,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                },
+                'post': {
+                    'fields': ('id', 'title', 'team_data', 'user_data')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
 
     @action(
         detail=False,
@@ -344,11 +552,11 @@ class UserViewSet(ViewSet):
         ).prefetch_related(
             Prefetch(
                 'postcommentlike_set',
-                queryset=PostCommentLike.objects.filter(post_comment__user=user).only('id')
+                queryset=PostCommentLike.objects.filter(post_comment__user=user)
             ),
             Prefetch(
                 'postcommentreply_set',
-                queryset=PostCommentReply.objects.filter(post_comment__user=user).only('id')
+                queryset=PostCommentReply.objects.filter(post_comment__user=user)
             ),
         ).select_related(
             'user',
@@ -399,6 +607,220 @@ class UserViewSet(ViewSet):
         )
 
         return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/chats',
+        permission_classes=[IsAuthenticated]
+    )
+    def get_chats(self, request):
+        user = request.user
+
+        user_chat_query = UserChat.objects.filter(
+            userchatparticipant__user=user
+        )
+        
+        chat_query = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.filter(
+                    chat__in=user_chat_query
+                ).prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.filter(
+                            sender__chat__in=user_chat_query
+                        ).order_by('created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        ).order_by('-updated_at')
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(chat_query, request)
+
+        serializer = UserChatSerializer(
+            paginated_data,
+            many=True,
+            fields=['id', 'participants'],
+            context={
+                'userchatparticipant': {
+                    'fields': ['user_data', 'last_message']
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)',
+        permission_classes=[IsAuthenticated]
+    )
+    def get_chat(self, request, user_id):
+        user = request.user
+
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        chat_query = UserChat.objects.filter(
+            id=chat.id
+        ).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.filter(
+                    chat=chat
+                ).prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.filter(
+                            sender__chat=chat
+                        ).order_by('created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        ).get()
+
+        serializer = UserChatSerializer(
+            chat_query,
+            fields=['id', 'participants', 'created_at', 'updated_at'],
+            context={
+                'userchatparticipant': {
+                    'fields': ['user_data', 'messages']
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/messages',
+        permission_classes=[IsAuthenticated]
+    )
+    def post_chat_message(self, request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        serializer = UserChatParticipantMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = serializer.save(
+            sender=UserChatParticipant.objects.get(user=user, chat=chat)
+        )
+
+        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'chats',
+        permission_classes=[IsAuthenticated]
+    )
+    def post_chat(self, request, pk=None):
+        try:
+            another_participant = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        user = request.user
+
+        chat = UserChat.objects.create()
+        UserChatParticipant.objects.bulk_create([
+            UserChatParticipant(user=user, chat=chat),
+            UserChatParticipant(user=another_participant, chat=chat)
+        ])
+
+        return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
+    
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'likes',
+        permission_classes=[IsAuthenticated]
+    )
+    def post_like(self, request, pk=None):
+        user = request.user
+        try:
+            user_to_like = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        UserLike.objects.get_or_create(user=user, liked_user=user_to_like)
+
+        try:
+            user = User.objects.filter(id=pk).annotate(
+                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+            ).get()
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        serializer = UserSerializer(
+            user,
+            fields=['id', 'likes_count', 'liked']
+        )
+
+        return Response(status=HTTP_201_CREATED, data=serializer.data)
+    
+    @post_like.mapping.delete
+    def delete_like(self, request, pk=None):
+        user = request.user
+        try:
+            user_to_like = User.objects.get(id=pk)
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        try:
+            UserLike.objects.get(user=user, liked_user=user_to_like).delete()
+        except UserLike.DoesNotExist:
+            return Response(status=HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.filter(id=pk).annotate(
+                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+            ).get()
+        except User.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        serializer = UserSerializer(
+            user,
+            fields=['id', 'likes_count', 'liked']
+        )
+
+        return Response(status=HTTP_200_OK, data=serializer.data)
 
 
 class JWTViewSet(ViewSet):

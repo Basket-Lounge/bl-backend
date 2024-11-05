@@ -13,7 +13,8 @@ from requests.exceptions import HTTPError
 from api.mixins import DynamicFieldsSerializerMixin
 from teams.models import Post, PostComment, PostCommentReply, PostCommentReplyStatus
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamLikeSerializer, TeamSerializer
-from users.models import Role
+from users.models import Role, UserChat, UserChatParticipant, UserChatParticipantMessage
+from users.utils import calculate_level
 
 
 class CustomSocialLoginSerializer(SocialLoginSerializer):
@@ -127,6 +128,9 @@ class RoleSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
 class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     teamlike_set = serializers.SerializerMethodField()
+    level = serializers.SerializerMethodField()
+    likes_count = serializers.SerializerMethodField()
+    liked = serializers.SerializerMethodField()
 
     class Meta:
         model = get_user_model()
@@ -144,6 +148,9 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         )
         return serializer.data
     
+    def get_level(self, obj):
+        return calculate_level(obj.experience)
+    
     def get_teamlike_set(self, obj):
         if not hasattr(obj, 'teamlike_set'):
             return None
@@ -156,6 +163,13 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
             **context    
         )
         return serializer.data
+
+    def get_likes_count(self, obj):
+        return obj.liked_user.count()
+    
+    def get_liked(self, obj):
+        return obj.liked
+
     
 
 class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -321,6 +335,121 @@ class PostCommentReplySerializer(DynamicFieldsSerializerMixin, serializers.Model
         context = self.context.get('status', {})
         serializer = PostCommentReplyStatusSerializer(
             obj.status, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+
+class UserChatParticipantMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    sender_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserChatParticipantMessage
+        exclude = ('sender',)
+
+    def get_sender_data(self, obj):
+        if not hasattr(obj, 'sender'):
+            return None
+        
+        context = self.context.get('userchatparticipant', {})
+        serializer = UserChatParticipantSerializer(
+            obj.sender, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+class UserChatParticipantMessageCreateSerializer(serializers.Serializer):
+    message = serializers.CharField(min_length=1)
+    
+    def create(self, validated_data):
+        return UserChatParticipantMessage.objects.create(**validated_data)
+
+
+class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    chat_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    messages = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserChatParticipant
+        exclude = ('chat', 'user')
+
+    def get_chat_data(self, obj):
+        if not hasattr(obj, 'chat'):
+            return None
+        
+        context = self.context.get('chat', {})
+        serializer = UserChatSerializer(
+            obj.chat, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+
+    def get_messages(self, obj):
+        if not hasattr(obj, 'userchatparticipantmessage_set'):
+            return None
+        
+        context = self.context.get('userchatparticipantmessage', {})
+        messages = obj.userchatparticipantmessage_set.all()
+
+        serializer = UserChatParticipantMessageSerializer(
+            messages,
+            many=True,
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+    def get_last_message(self, obj):
+        if not hasattr(obj, 'userchatparticipantmessage_set'):
+            return None
+        
+        context = self.context.get('userchatparticipantmessage', {})
+        last_message = obj.userchatparticipantmessage_set.all().last()
+
+        if not last_message:
+            return None
+
+        serializer = UserChatParticipantMessageSerializer(
+            last_message,
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+
+class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    participants = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserChat
+        fields = '__all__'
+
+    def get_participants(self, obj):
+        if not hasattr(obj, 'userchatparticipant_set'):
+            return None
+        
+        context = self.context.get('userchatparticipant', {})
+        serializer = UserChatParticipantSerializer(
+            obj.userchatparticipant_set, 
+            many=True,
             context=self.context,
             **context    
         )
