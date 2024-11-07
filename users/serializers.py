@@ -1,4 +1,7 @@
+from datetime import datetime, timezone
+
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework import serializers
@@ -343,6 +346,7 @@ class PostCommentReplySerializer(DynamicFieldsSerializerMixin, serializers.Model
 
 class UserChatParticipantMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     sender_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
 
     class Meta:
         model = UserChatParticipantMessage
@@ -360,11 +364,39 @@ class UserChatParticipantMessageSerializer(DynamicFieldsSerializerMixin, seriali
         )
         return serializer.data
     
+    def get_user_data(self, obj):
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.sender.user,
+            context=self.context,
+            **context    
+        )
+
+        return serializer.data
+    
 class UserChatParticipantMessageCreateSerializer(serializers.Serializer):
     message = serializers.CharField(min_length=1)
     
     def create(self, validated_data):
-        return UserChatParticipantMessage.objects.create(**validated_data)
+        sender = validated_data.get('sender', None)
+        receiver = validated_data.get('receiver', None)
+
+        if sender is None:
+            raise serializers.ValidationError('Sender is required')
+
+        if receiver is None: 
+            raise serializers.ValidationError('Receiver is required')
+        
+        if receiver.chat_deleted:
+            receiver.chat_deleted = False
+            receiver.last_deleted_at = datetime.now(timezone.utc)
+            receiver.save()
+
+        ## remove the receiver from the validated data
+        validated_data.pop('receiver', None)
+
+        with transaction.atomic():
+            return UserChatParticipantMessage.objects.create(**validated_data)
 
 
 class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -372,6 +404,7 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
     user_data = serializers.SerializerMethodField()
     messages = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
+    unread_messages_count = serializers.SerializerMethodField()
 
     class Meta:
         model = UserChatParticipant
@@ -401,13 +434,16 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
         )
         return serializer.data
 
-
     def get_messages(self, obj):
         if not hasattr(obj, 'userchatparticipantmessage_set'):
             return None
         
         context = self.context.get('userchatparticipantmessage', {})
         messages = obj.userchatparticipantmessage_set.all()
+
+        last_deleted_at = context.get('last_deleted_at', None)
+        if last_deleted_at:
+            messages = [message for message in messages if message.created_at > last_deleted_at]
 
         serializer = UserChatParticipantMessageSerializer(
             messages,
@@ -433,7 +469,20 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
             **context    
         )
         return serializer.data
+    
+    def get_unread_messages_count(self, obj):
+        if not hasattr(obj, 'userchatparticipantmessage_set'):
+            return None
 
+        last_read_at = obj.last_read_at
+
+        count = 0
+        for message in obj.userchatparticipantmessage_set.all():
+            if message.created_at > last_read_at:
+                count += 1
+
+        return count
+    
 
 class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     participants = serializers.SerializerMethodField()
@@ -448,7 +497,7 @@ class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
         
         context = self.context.get('userchatparticipant', {})
         serializer = UserChatParticipantSerializer(
-            obj.userchatparticipant_set, 
+            obj.userchatparticipant_set.all(),
             many=True,
             context=self.context,
             **context    

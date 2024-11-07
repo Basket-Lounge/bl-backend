@@ -54,6 +54,7 @@ class User(AbstractBaseUser):
     email = models.EmailField(unique=True)
     experience = models.IntegerField(default=0)
     introduction = models.TextField(blank=True)
+    chat_blocked = models.BooleanField(default=False)
     is_profile_visible = models.BooleanField(
         default=True,
         verbose_name='Profile visibility'
@@ -74,7 +75,6 @@ class User(AbstractBaseUser):
         auto_now=True,
         verbose_name='Last update'
     )
-
 
     def __str__(self):
         return self.username
@@ -139,6 +139,7 @@ class Block(models.Model):
     class Meta:
         unique_together = ['user', 'blocked_user']
 
+
 class UserChat(models.Model):
     id = models.UUIDField(
         primary_key=True, 
@@ -159,6 +160,20 @@ class UserChatParticipant(models.Model):
     )
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     chat = models.ForeignKey(UserChat, on_delete=models.CASCADE)
+    chat_deleted = models.BooleanField(default=False)
+    last_deleted_at = models.DateTimeField(
+        null=True, 
+        help_text="Last time the user deleted the chat"
+    )
+    last_read_at = models.DateTimeField(
+        auto_now=True, 
+        help_text="Last time the other user read the chat"
+    )
+    chat_blocked = models.BooleanField(
+        default=False, 
+        help_text="Whether the user blocked the chat"
+    )
+    last_blocked_at = models.DateTimeField(null=True)
 
     def __str__(self):
         return f'{self.id}'
@@ -172,7 +187,10 @@ class UserChatParticipantMessage(models.Model):
         default=uuid.uuid4, 
         editable=False
     )
-    sender = models.ForeignKey(UserChatParticipant, on_delete=models.CASCADE)
+    sender = models.ForeignKey(
+        UserChatParticipant, 
+        on_delete=models.CASCADE
+    )
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

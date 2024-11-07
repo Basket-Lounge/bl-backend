@@ -13,10 +13,13 @@ from rest_framework.status import (
     HTTP_200_OK, 
     HTTP_201_CREATED, 
     HTTP_400_BAD_REQUEST,
-    HTTP_404_NOT_FOUND
+    HTTP_404_NOT_FOUND,
+    HTTP_500_INTERNAL_SERVER_ERROR
 )
 
 from api.paginators import CustomPageNumberPagination
+from api.websocket import send_message_to_centrifuge
+from games.models import Game
 from teams.models import (
     Post, 
     PostComment, 
@@ -35,6 +38,7 @@ from users.serializers import (
     PostCommentSerializer, 
     PostSerializer,
     UserChatParticipantMessageCreateSerializer,
+    UserChatParticipantMessageSerializer,
     UserChatSerializer, 
     UserSerializer
 )
@@ -618,11 +622,15 @@ class UserViewSet(ViewSet):
         user = request.user
 
         user_chat_query = UserChat.objects.filter(
-            userchatparticipant__user=user
+            userchatparticipant__user=user,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__chat_deleted=False
         )
         
         chat_query = UserChat.objects.filter(
-            userchatparticipant__user=user
+            userchatparticipant__user=user,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__chat_deleted=False
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
@@ -650,10 +658,10 @@ class UserViewSet(ViewSet):
             fields=['id', 'participants'],
             context={
                 'userchatparticipant': {
-                    'fields': ['user_data', 'last_message']
+                    'fields': ['user_data', 'last_message', 'unread_messages_count']
                 },
                 'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data']
+                    'fields_exclude': ['sender_data', 'user_data']
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -673,9 +681,11 @@ class UserViewSet(ViewSet):
         user = request.user
 
         chat = UserChat.objects.filter(
-            userchatparticipant__user=user
+            userchatparticipant__user=user,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__user__chat_blocked=False,
         ).filter(
-            userchatparticipant__user__id=user_id
+            userchatparticipant__user__id=user_id,
         ).first()
 
         if not chat:
@@ -709,7 +719,7 @@ class UserViewSet(ViewSet):
                     'fields': ['user_data', 'messages']
                 },
                 'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data']
+                    'fields_exclude': ['sender_data', 'user_data']
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -730,38 +740,243 @@ class UserViewSet(ViewSet):
         chat = UserChat.objects.filter(
             userchatparticipant__user=user
         ).filter(
+            userchatparticipant__user__id=user_id,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__user__chat_blocked=False,
+        ).first()
+
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        participants = chat.userchatparticipant_set.all()
+
+        serializer = UserChatParticipantMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = serializer.save(
+            sender=participants.get(user=user),
+            receiver=participants.get(user__id=user_id)
+        )
+        chat.save()
+
+        message_serializer = UserChatParticipantMessageSerializer(
+            message,
+            fields_exclude=['sender_data'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+        chat = UserChat.objects.filter(id=chat.id).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.filter(
+                    chat=chat
+                ).prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.filter(
+                            sender__chat=chat
+                        ).order_by('created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        ).get()
+
+        chat_serializer = UserChatSerializer(
+            chat,
+            fields=['id', 'participants', 'created_at', 'updated_at'],
+            context={
+                'userchatparticipant': {
+                    'fields': [
+                        'user_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+        sender_chat_notification_channel_name = f'users/{user.id}/chats/updates'
+        resp_json = send_message_to_centrifuge(
+            sender_chat_notification_channel_name,
+            chat_serializer.data
+        )
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Notification Delivery To Sender Unsuccessful'}, 
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        recipient_chat_notification_channel_name = f'users/{user_id}/chats/updates'
+        resp_json = send_message_to_centrifuge(
+            recipient_chat_notification_channel_name,
+            chat_serializer.data
+        ) 
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Notification Delivery To Recipient Unsuccessful'},
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        chat_channel_name = f'users/chats/{chat.id}'
+        resp_json = send_message_to_centrifuge(
+            chat_channel_name, 
+            message_serializer.data
+        )
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Message Delivery To Chat Unsuccessful'},
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+    
+    @action(
+        detail=False,
+        methods=['put'],
+        url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/mark-as-read',
+        permission_classes=[IsAuthenticated]
+    )
+    def mark_chat_messages_as_read(self, request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
             userchatparticipant__user__id=user_id
         ).first()
 
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        serializer = UserChatParticipantMessageCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        message = serializer.save(
-            sender=UserChatParticipant.objects.get(user=user, chat=chat)
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user__id=user_id
+        ).update(last_read_at=datetime.now(timezone.utc))
+
+        chat = UserChat.objects.filter(id=chat.id).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.filter(
+                    chat=chat
+                ).prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.filter(
+                            sender__chat=chat
+                        ).order_by('created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        ).get()
+
+        chat_serializer = UserChatSerializer(
+            chat,
+            fields=['id', 'participants', 'created_at', 'updated_at'],
+            context={
+                'userchatparticipant': {
+                    'fields': [
+                        'user_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
         )
 
-        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+        sender_chat_notification_channel_name = f'users/{user.id}/chats/updates'
+        resp_json = send_message_to_centrifuge(
+            sender_chat_notification_channel_name,
+            chat_serializer.data
+        )
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Notification Delivery To Sender Unsuccessful'}, 
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        return Response(status=HTTP_200_OK)
     
+    @get_chat.mapping.delete
+    def delete_chat(self, request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user=user
+        ).update(chat_deleted=True, last_deleted_at=datetime.now(timezone.utc))
+
+        return Response(status=HTTP_200_OK)
+
     @action(
         detail=True,
         methods=['post'],
         url_path=r'chats',
         permission_classes=[IsAuthenticated]
     )
-    def post_chat(self, request, pk=None):
+    def create_chat(self, request, pk=None):
         try:
-            another_participant = User.objects.get(id=pk)
+            target_user = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
         
         user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user=target_user
+        ).first()
+        
+        if chat:
+            participants = UserChatParticipant.objects.filter(
+                chat=chat,
+            )
+
+            user_participant = participants.filter(user=user).first()
+            target_participant = participants.filter(user=target_user).first()
+
+            # If the chat is blocked by a user that is not the current user, then return 400
+            if target_user.chat_blocked or target_participant.chat_blocked:
+                return Response(status=HTTP_400_BAD_REQUEST, data={'error': '현재 사용자랑 채팅을 할 수 없습니다.'})
+
+            if user_participant.chat_deleted:
+                user_participant.chat_deleted = False
+                user_participant.last_deleted_at = datetime.now(timezone.utc)
+                user_participant.save()
+
+                return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
+
+            return Response(status=HTTP_400_BAD_REQUEST)
 
         chat = UserChat.objects.create()
         UserChatParticipant.objects.bulk_create([
             UserChatParticipant(user=user, chat=chat),
-            UserChatParticipant(user=another_participant, chat=chat)
+            UserChatParticipant(user=target_user, chat=chat)
         ])
 
         return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
@@ -875,8 +1090,34 @@ class JWTViewSet(ViewSet):
         token = generate_websocket_connection_token(request.user.id)
         return Response({'token': str(token)})
 
-    @action(detail=False, methods=['get'], url_path='subscription')
-    def subscription(self, request):
-        channel_name = request.query_params.get('channel')
+    @action(detail=False, methods=['get'], url_path=r'subscription/games/(?P<game_id>[0-9a-zA-Z-]+)/live-chat')
+    def subscribe_for_live_game_chat(self, request, game_id):
+        try:
+            Game.objects.get(game_id=game_id)
+        except Game.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        channel_name = f'games/{game_id}/live-chat'
+        token = generate_websocket_subscription_token(request.user.id, channel_name)
+        return Response({'token': str(token)})
+    
+    @action(detail=False, methods=['get'], url_path=r'subscription/users/chats/(?P<chat_id>[0-9a-zA-Z-]+)')
+    def subscribe_for_user_chat(self, request, chat_id):
+        try:
+            UserChat.objects.get(
+                id=chat_id, 
+                userchatparticipant__user=request.user
+            )
+        except UserChat.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        channel_name = f'users/chats/{chat_id}'
+
+        token = generate_websocket_subscription_token(request.user.id, channel_name)
+        return Response({'token': str(token)})
+    
+    @action(detail=False, methods=['get'], url_path=r'subscription/users/chat-updates')
+    def subscribe_for_user_chat_updates(self, request):
+        channel_name = f'users/{request.user.id}/chats/updates'
         token = generate_websocket_subscription_token(request.user.id, channel_name)
         return Response({'token': str(token)})
