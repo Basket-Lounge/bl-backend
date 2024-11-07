@@ -22,7 +22,7 @@ class Player(models.Model):
         blank=True, 
         null=True
     )  # Jersey number can be alphanumeric
-    position = models.CharField(max_length=20)  # Position, e.g., "G" or "F-C"
+    position = models.CharField(max_length=20, null=True)  # Position, e.g., "G" or "F-C"
     height = models.CharField(max_length=10)  # Height in format like "6-7"
     weight = models.FloatField(null=True)  # Weight in pounds
     college = models.CharField(max_length=100, blank=True, null=True)  # College may be missing for international players
