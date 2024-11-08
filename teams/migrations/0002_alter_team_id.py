@@ -2,6 +2,10 @@
 
 from django.db import migrations, models
 
+def create_language(apps, schema_editor):
+    Language = apps.get_model('teams', 'Language')
+    Language.objects.create(name='English')
+    Language.objects.create(name='Korean')
 
 class Migration(migrations.Migration):
 
@@ -15,4 +19,5 @@ class Migration(migrations.Migration):
             name='id',
             field=models.PositiveBigIntegerField(primary_key=True, serialize=False),
         ),
+        migrations.RunPython(create_language),
     ]
