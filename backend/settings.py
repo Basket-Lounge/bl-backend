@@ -251,7 +251,7 @@ CELERY_RESULT_BACKEND = env.str('CELERY_RESULT_BACKEND')
 CELERY_BEAT_SCHEDULE = {
     "update_live_game_score": {
         "task": "games.tasks.update_game_score",
-        "schedule": crontab(minute="*/3"),
+        "schedule": crontab(minute="*/1"),
         "options": {"queue": "today_game_update"},
     },
     "update_teams_roster": {
@@ -265,7 +265,7 @@ CELERY_BEAT_SCHEDULE = {
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379",
+        "LOCATION": env.str('REDIS_URL'),
     }
 }
 
