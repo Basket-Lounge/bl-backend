@@ -7,7 +7,7 @@ from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
 from games.models import Game
 from games.services import update_live_scores, update_team_statistics
 
-from django.db import transaction
+from django.db import transaction, DatabaseError
 
 
 @shared_task
@@ -17,12 +17,19 @@ def update_game_score():
     for each in games:
         boxscore = BoxScore(game_id=each['gameId']).get_dict()['game']
 
-        game = Game.objects.get(game_id=each['gameId'])
-        ## if the game is over, skip
-        if game.game_status_id == 3:
-            continue
-        
         with transaction.atomic():
+            try:
+                game = Game.objects.select_for_update(nowait=True).get(game_id=each['gameId'])
+            except Game.DoesNotExist:
+                print("Game not found: ", each['gameId'])
+                continue
+            except DatabaseError:
+                print("Database error: ", each['gameId'])
+                continue
+
+            ## if the game is over, skip
+            if game.game_status_id == 3:
+                continue
             game.game_status_id = boxscore['gameStatus']
             game.game_status_text = boxscore['gameStatusText']
             game.live_period = boxscore['period']
