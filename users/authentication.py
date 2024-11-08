@@ -41,6 +41,37 @@ class CookieJWTAccessAuthentication(JWTAuthentication):
             raise AuthenticationFailed(_("User is not active"), code='user_inactive')
         
         return user
+    
+
+class CookieJWTAdminAccessAuthentication(JWTAuthentication):
+    def authenticate(self, request: Request) -> Tuple[AuthUser, Token] | None:
+        access_token = request.COOKIES.get(
+            settings.SIMPLE_JWT['AUTH_ACCESS_TOKEN_COOKIE'], 
+            None
+        )
+        if not access_token:
+            return None
+
+        validated_token = self.get_validated_token(access_token)
+
+        user = self.get_user(validated_token)
+        return user, validated_token
+    
+    def get_user(self, validated_token: Token) -> AuthUser:
+        try:
+            user_id = validated_token[api_settings.USER_ID_CLAIM]
+        except KeyError:
+            raise InvalidToken(_("Token contained no recognizable user identification"))
+        
+        try:
+            user = User.objects.select_related('role').get(id=user_id)
+        except User.DoesNotExist:
+            raise AuthenticationFailed(_("User not found"), code='user_not_found')
+        
+        if user.role.weight >= 3:
+            raise AuthenticationFailed(_("User is not an admin"), code='user_not_admin')
+        
+        return user
 
 
 class CookieJWTRefreshAuthentication(JWTAuthentication):

@@ -439,10 +439,14 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
             return None
         
         context = self.context.get('userchatparticipantmessage', {})
-        messages = obj.userchatparticipantmessage_set.all()
+        extra_context = self.context.get('userchatparticipantmessage_extra', {})
 
-        last_deleted_at = context.get('last_deleted_at', None)
-        if last_deleted_at:
+        ## get the last 50 messages
+        messages = obj.userchatparticipantmessage_set.all()[:50]
+
+        user = extra_context.get('user_last_deleted_at', None)
+        if user:
+            last_deleted_at = user.get('last_deleted_at', None)
             messages = [message for message in messages if message.created_at > last_deleted_at]
 
         serializer = UserChatParticipantMessageSerializer(

@@ -20,6 +20,8 @@ from rest_framework.status import (
 from api.paginators import CustomPageNumberPagination
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
+from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryTypeDisplayName
+from management.serializers import InquiryMessageCreateSerializer, InquiryMessageSerializer, InquirySerializer
 from teams.models import (
     Post, 
     PostComment, 
@@ -658,7 +660,11 @@ class UserViewSet(ViewSet):
             fields=['id', 'participants'],
             context={
                 'userchatparticipant': {
-                    'fields': ['user_data', 'last_message', 'unread_messages_count']
+                    'fields': [
+                        'user_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
                 },
                 'userchatparticipantmessage': {
                     'fields_exclude': ['sender_data', 'user_data']
@@ -703,7 +709,7 @@ class UserViewSet(ViewSet):
                         'userchatparticipantmessage_set',
                         queryset=UserChatParticipantMessage.objects.filter(
                             sender__chat=chat
-                        ).order_by('created_at')
+                        ).order_by('-created_at')
                     ),
                 ).select_related(
                     'user',
@@ -711,15 +717,27 @@ class UserViewSet(ViewSet):
             )
         ).get()
 
+        user_participant = chat_query.userchatparticipant_set.get(user=user)
         serializer = UserChatSerializer(
             chat_query,
-            fields=['id', 'participants', 'created_at', 'updated_at'],
+            fields=[
+                'id', 
+                'participants', 
+                'created_at', 
+                'updated_at'
+            ],
             context={
                 'userchatparticipant': {
                     'fields': ['user_data', 'messages']
                 },
                 'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data']
+                    'fields_exclude': ['sender_data', 'user_data'],
+                },
+                'userchatparticipantmessage_extra': {
+                    'user_last_deleted_at': {
+                        'id': user_participant.id,
+                        'last_deleted_at': user_participant.last_deleted_at
+                    }
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -914,6 +932,38 @@ class UserViewSet(ViewSet):
 
         return Response(status=HTTP_200_OK)
     
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path=r'me/chats/(?P<user_id>[0-9a-f-])/block',
+        permission_classes=[IsAuthenticated]
+    )
+    def block_chat(self, request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user=user
+        ).update(
+            chat_blocked=True, 
+            last_blocked_at=datetime.now(timezone.utc)
+        )
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user__id=user_id
+        ).update(last_read_at=datetime.now(timezone.utc))
+
+        return Response(status=HTTP_201_CREATED)
+    
     @get_chat.mapping.delete
     def delete_chat(self, request, user_id):
         user = request.user
@@ -930,6 +980,11 @@ class UserViewSet(ViewSet):
             chat=chat,
             user=user
         ).update(chat_deleted=True, last_deleted_at=datetime.now(timezone.utc))
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user__id=user_id
+        ).update(last_read_at=datetime.now(timezone.utc))
 
         return Response(status=HTTP_200_OK)
 
@@ -963,10 +1018,21 @@ class UserViewSet(ViewSet):
             # If the chat is blocked by a user that is not the current user, then return 400
             if target_user.chat_blocked or target_participant.chat_blocked:
                 return Response(status=HTTP_400_BAD_REQUEST, data={'error': '현재 사용자랑 채팅을 할 수 없습니다.'})
+            
+            if user_participant.chat_blocked:
+                user_participant.chat_blocked = False
+                user_participant.last_blocked_at = datetime.now(timezone.utc)
+                user_participant.chat_deleted = False
+                user_participant.last_deleted_at = datetime.now(timezone.utc)
+                target_participant.last_read_at = datetime.now(timezone.utc)
+                user_participant.save()
+
+                return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
 
             if user_participant.chat_deleted:
                 user_participant.chat_deleted = False
                 user_participant.last_deleted_at = datetime.now(timezone.utc)
+                target_participant.last_read_at = datetime.now(timezone.utc)
                 user_participant.save()
 
                 return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
@@ -1036,7 +1102,276 @@ class UserViewSet(ViewSet):
         )
 
         return Response(status=HTTP_200_OK, data=serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/inquiries',
+        permission_classes=[IsAuthenticated]
+    )
+    def get_inquiries(self, request):
+        user = request.user
 
+        inquiry_query = Inquiry.objects.filter(user=user).order_by('-created_at').select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+            Prefetch(
+                'inquirymessage_set',
+                queryset=InquiryMessage.objects.filter(
+                    inquiry__user=user
+                ).order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.filter(
+                    inquiry__user=user
+                ).select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.filter(
+                            inquiry_moderator__inquiry__user=user
+                        ).order_by('created_at')
+                    )
+                )
+            )
+        )
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(inquiry_query, request)
+
+        serializer = InquirySerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=['user_data'],
+            context={
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'messages']
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)',
+        permission_classes=[IsAuthenticated]
+    )
+    def get_inquiry(self, request, inquiry_id):
+        user = request.user
+
+        inquiry_ref = Inquiry.objects.filter(user=user).filter(id=inquiry_id).only('id').first()
+        if not inquiry_ref:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        inquiry = Inquiry.objects.filter(id=inquiry_id).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+            Prefetch(
+                'inquirymessage_set',
+                queryset=InquiryMessage.objects.filter(
+                    inquiry__id=inquiry_id
+                ).order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.filter(
+                    inquiry__id=inquiry_id
+                ).select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.filter(
+                            inquiry_moderator__inquiry__id=inquiry_id
+                        ).order_by('created_at')
+                    )
+                )
+            )
+        ).first()
+
+        serializer = InquirySerializer(
+            inquiry,
+            fields_exclude=['user_data', 'last_message'],
+            context={
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'messages']
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/messages',
+        permission_classes=[IsAuthenticated]
+    )
+    def post_inquiry_message(self, request, inquiry_id):
+        user = request.user
+
+        serializer = InquiryMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = serializer.save(
+            inquiry=inquiry_id
+        )
+        message_serializer = InquiryMessageSerializer(
+            message,
+            context={
+                'inquiry': {
+                    'fields': ['id', 'user_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+        inquiry = Inquiry.objects.filter(id=inquiry_id).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+            Prefetch(
+                'inquirymessage_set',
+                queryset=InquiryMessage.objects.filter(
+                    inquiry__id=inquiry_id
+                ).order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.filter(
+                    inquiry__id=inquiry_id
+                ).select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.filter(
+                            inquiry_moderator__inquiry__id=inquiry_id
+                        ).order_by('created_at')
+                    )
+                )
+            )
+        ).first()
+
+        serializer = InquirySerializer(
+            inquiry,
+            fields_exclude=['user_data', 'messages'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message']
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        inquiry_channel_name = f'inquiries/{inquiry_id}'
+        resp_json = send_message_to_centrifuge(
+            inquiry_channel_name,
+            message_serializer.data
+        )
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Message Delivery To Inquiry Unsuccessful'},
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        user_inquiry_notification_channel_name = f'users/{user.id}/inquiries/updates'
+        resp_json = send_message_to_centrifuge(
+            user_inquiry_notification_channel_name,
+            serializer.data
+        )
+        if resp_json.get('error', None):
+            return Response(
+                {'error': 'Notification Delivery To User Unsuccessful'},
+                status=HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        for moderator in inquiry.inquirymoderator_set.all():
+            moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
+            resp_json = send_message_to_centrifuge(
+                moderator_inquiry_notification_channel_name,
+                serializer.data
+            )
+            if resp_json.get('error', None):
+                return Response(
+                    {'error': 'Notification Delivery To Moderator Unsuccessful'},
+                    status=HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+    
 
 class JWTViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
