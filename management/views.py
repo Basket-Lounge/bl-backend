@@ -4,13 +4,29 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from django.db.models import Prefetch
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
+
+from rest_framework.permissions import AllowAny
 from rest_framework.decorators import action
 
 from api.paginators import CustomPageNumberPagination
 from api.websocket import send_message_to_centrifuge
-from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryTypeDisplayName
-from management.serializers import InquiryCreateSerializer, InquiryModeratorMessageCreateSerializer, InquiryModeratorMessageSerializer, InquirySerializer
-
+from management.models import (
+    Inquiry, 
+    InquiryMessage, 
+    InquiryModerator, 
+    InquiryModeratorMessage, 
+    InquiryType, 
+    InquiryTypeDisplayName
+)
+from management.serializers import (
+    InquiryCreateSerializer, 
+    InquiryModeratorMessageCreateSerializer, 
+    InquiryModeratorMessageSerializer, 
+    InquirySerializer, 
+    InquiryTypeSerializer
+)
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
 
 
@@ -28,14 +44,7 @@ class InquiryViewSet(viewsets.ViewSet):
         return Response(status=HTTP_201_CREATED)
     
     def retrieve(self, request, pk=None):
-        user = request.user
-
-        inquiry_ref = Inquiry.objects.filter(user=user).filter(id=pk).only('id').first()
-
-        if not inquiry_ref:
-            return Response(status=HTTP_404_NOT_FOUND)
-
-        inquiry = Inquiry.objects.filter(id=inquiry_ref.id).select_related(
+        inquiry = Inquiry.objects.filter(id=pk).select_related(
             'inquiry_type',
             'user'
         ).prefetch_related(
@@ -43,30 +52,27 @@ class InquiryViewSet(viewsets.ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.filter(
-                    inquiry__id=pk
-                ).order_by('created_at')
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
-                queryset=InquiryModerator.objects.filter(
-                    inquiry__id=pk
-                ).select_related(
+                queryset=InquiryModerator.objects.select_related(
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.filter(
-                            inquiry_moderator__inquiry__id=pk
-                        ).order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
         ).first()
+
+        if not inquiry:
+            return Response(status=HTTP_404_NOT_FOUND)
 
         serializer = InquirySerializer(
             inquiry,
@@ -79,7 +85,7 @@ class InquiryViewSet(viewsets.ViewSet):
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
                     'fields': ['moderator_data', 'messages']
@@ -88,7 +94,39 @@ class InquiryViewSet(viewsets.ViewSet):
                     'fields': ['username', 'id']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    # @method_decorator(cache_page(60 * 60 * 24))
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'types',
+        permission_classes=[AllowAny]
+    )
+    def get_inquiry_types(self, request):
+        statuses = InquiryType.objects.prefetch_related(
+            Prefetch(
+                'inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            )
+        )
+
+        serializer = InquiryTypeSerializer(
+            statuses,
+            many=True,
+            context={
+                'inquirytypedisplayname': {
+                    'fields_exclude': ['inquiry_type_data']
                 },
                 'language': {
                     'fields': ['name']
@@ -112,26 +150,20 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.filter(
-                    inquiry__id=pk
-                ).order_by('created_at')
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
-                queryset=InquiryModerator.objects.filter(
-                    inquiry__id=pk
-                ).select_related(
+                queryset=InquiryModerator.objects.select_related(
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.filter(
-                            inquiry_moderator__inquiry__id=pk
-                        ).order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
@@ -151,7 +183,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
                     'fields': ['moderator_data', 'messages']
@@ -160,7 +192,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                     'fields': ['username', 'id']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
                 },
                 'language': {
                     'fields': ['name']
@@ -179,11 +211,11 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.all()
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
@@ -192,7 +224,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.all()
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
@@ -200,11 +232,11 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
-
+        
         serializer = InquirySerializer(
             inquiries,
             many=True,
-            fields_exclude=['messages'],
+            fields_exclude=['messages', 'unread_messages_count'],
             context={
                 'user': {
                     'fields': ['username', 'id']
@@ -213,16 +245,16 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
-                    'fields': ['moderator_data', 'last_message']
+                    'fields': ['moderator_data', 'last_message'],
                 },
                 'moderator': {
                     'fields': ['username', 'id']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
                 },
                 'language': {
                     'fields': ['name']
@@ -231,6 +263,364 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         )
 
         return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='unassigned'
+    )
+    def list_unassigned_inquiries(self, request):
+        inquiries = Inquiry.objects.filter(
+            inquirymoderator__isnull=True
+        ).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    )
+                )
+            )
+        )
+
+        pagination = CustomPageNumberPagination()
+        inquiries = pagination.paginate_queryset(inquiries, request)
+        
+        serializer = InquirySerializer(
+            inquiries,
+            many=True,
+            fields_exclude=['messages', 'unread_messages_count'],
+            context={
+                'user': {
+                    'fields': ['username', 'id']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message']
+                },
+                'moderator': {
+                    'fields': ['username', 'id']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'assigned'
+    )
+    def list_assigned_inquiries(self, request):
+        inquiries = Inquiry.objects.filter(
+            inquirymoderator__isnull=False
+        ).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    )
+                )
+            )
+        )
+
+        pagination = CustomPageNumberPagination()
+        inquiries = pagination.paginate_queryset(inquiries, request)
+        
+        serializer = InquirySerializer(
+            inquiries,
+            many=True,
+            fields_exclude=['messages', 'unread_messages_count'],
+            context={
+                'user': {
+                    'fields': ['username', 'id']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message']
+                },
+                'moderator': {
+                    'fields': ['username', 'id']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'solved'
+    )
+    def list_solved_inquiries(self, request):
+        inquiries = Inquiry.objects.filter(solved=True).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    )
+                )
+            )
+        )
+
+        pagination = CustomPageNumberPagination()
+        inquiries = pagination.paginate_queryset(inquiries, request)
+        
+        serializer = InquirySerializer(
+            inquiries,
+            many=True,
+            fields_exclude=['messages', 'unread_messages_count'],
+            context={
+                'user': {
+                    'fields': ['username', 'id']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message']
+                },
+                'moderator': {
+                    'fields': ['username', 'id']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'unsolved'
+    )
+    def list_unsolved_inquiries(self, request):
+        inquiries = Inquiry.objects.filter(solved=False).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    )
+                )
+            )
+        )
+
+        pagination = CustomPageNumberPagination()
+        inquiries = pagination.paginate_queryset(inquiries, request)
+        
+        serializer = InquirySerializer(
+            inquiries,
+            many=True,
+            fields_exclude=['messages', 'unread_messages_count'],
+            context={
+                'user': {
+                    'fields': ['username', 'id']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message']
+                },
+                'moderator': {
+                    'fields': ['username', 'id']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'mine'
+    )
+    def list_my_inquiries(self, request):
+        inquiries = Inquiry.objects.filter(
+            inquirymoderator__moderator=request.user
+        ).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related('language')
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related('moderator').prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    )
+                )
+            )
+        )
+
+        pagination = CustomPageNumberPagination()
+        inquiries = pagination.paginate_queryset(inquiries, request)
+
+        data = []
+        for inquiry in inquiries:
+            last_read_at = None
+            for moderator in inquiry.inquirymoderator_set.all():
+                if moderator.moderator == request.user:
+                    last_read_at = moderator.last_read_at
+                    break
+
+            serializer = InquirySerializer(
+                inquiry,
+                fields_exclude=['messages'],
+                context={
+                    'user': {
+                        'fields': ['username', 'id']
+                    },
+                    'inquirytypedisplayname': {
+                        'fields': ['display_name', 'language_data']
+                    },
+                    'inquirymessage': {
+                        'fields_exclude': ['inquiry_data', 'user_data']
+                    },
+                    'inquirymessage_extra': {
+                        'user_last_read_at': {
+                            'id': request.user.id,
+                            'last_read_at': last_read_at
+                        }
+                    },
+                    'inquirymoderator': {
+                        'fields': ['moderator_data', 'last_message', 'unread_messages_count']
+                    },
+                    'moderator': {
+                        'fields': ['username', 'id']
+                    },
+                    'inquirymoderatormessage': {
+                        'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                    },
+                    'inquirymoderatormessage_extra': {
+                        'user_last_read_at': {
+                            'id': request.user.id,
+                            'last_read_at': last_read_at
+                        }
+                    },
+                    'language': {
+                        'fields': ['name']
+                    }
+                }
+            )
+
+            data.append(serializer.data)
+
+        return Response(data)
     
     @action(
         detail=True,
@@ -273,11 +663,9 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
 
         message_serializer = InquiryModeratorMessageSerializer(
             message,
+            fields_exclude=['inquiry_moderator_data'],
             context={
-                'inquirymoderator': {
-                    'fields': ['moderator_data']
-                },
-                'moderator': {
+                'user': {
                     'fields': ['username', 'id']
                 }
             }
@@ -291,26 +679,20 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.filter(
-                    inquiry__id=pk
-                ).order_by('created_at')
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
-                queryset=InquiryModerator.objects.filter(
-                    inquiry__id=pk
-                ).select_related(
+                queryset=InquiryModerator.objects.select_related(
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.filter(
-                            inquiry_moderator__inquiry__id=pk
-                        ).order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
@@ -327,7 +709,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
                     'fields': ['moderator_data', 'last_message', 'unread_messages_count']
@@ -336,7 +718,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                     'fields': ['username', 'id']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
                 },
                 'inquirymoderatormessage_extra': {
                     'user_last_read_at': {
@@ -350,7 +732,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
             }
         )
 
-        inquiry_channel_name = f'inquiries/{pk}'
+        inquiry_channel_name = f'users/inquiries/{pk}'
         resp_json = send_message_to_centrifuge(
             inquiry_channel_name,
             message_serializer.data
@@ -384,7 +766,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                         'fields': ['display_name', 'language_data']
                     },
                     'inquirymessage': {
-                        'fields_exclude': ['inquiry_data']
+                        'fields_exclude': ['inquiry_data', 'user_data']
                     },
                     'inquirymessage_extra': {
                         'user_last_read_at': {
@@ -399,7 +781,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                         'fields': ['username', 'id']
                     },
                     'inquirymoderatormessage': {
-                        'fields_exclude': ['inquiry_moderator_data']
+                        'fields_exclude': ['inquiry_moderator_data', 'user_data']
                     },
                     'inquirymoderatormessage_extra': {
                         'user_last_read_at': {

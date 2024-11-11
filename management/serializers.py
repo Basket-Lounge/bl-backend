@@ -46,6 +46,8 @@ class InquiryMessageCreateSerializer(serializers.Serializer):
             message=validated_data['message'],
         )
 
+        inquiry.save()
+
         return message
 
 
@@ -105,6 +107,7 @@ class InquiryTypeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeria
 
 class InquiryModeratorMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     inquiry_moderator_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
 
     class Meta:
         model = InquiryModeratorMessage
@@ -117,6 +120,18 @@ class InquiryModeratorMessageSerializer(DynamicFieldsSerializerMixin, serializer
         context = self.context.get('inquirymoderator', {})
         serializer = InquiryModeratorSerializer(
             obj.inquiry_moderator, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'inquiry_moderator') or not hasattr(obj.inquiry_moderator, 'moderator'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.inquiry_moderator.moderator, 
             context=self.context,
             **context    
         )
@@ -204,26 +219,28 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
             return None
         
         context = self.context.get('inquirymoderatormessage_extra', {})
-        user = context.get('user_last_read_at', None)
-        if not user:
+        user_last_read_at = context.get('user_last_read_at', None)
+        if not user_last_read_at:
             return None
-
-        id = user.get('id', None)
-        if not id:
-            return None
+        
+        if not user_last_read_at.get('id', None):
+            user_last_read_at = user_last_read_at.get(obj.id, None)
+            if not user_last_read_at:
+                return None
 
         count = 0
-        if obj.moderator.id != id:
-            last_read_at = user.get('last_read_at', None)
+        if obj.moderator.id != user_last_read_at['id']:
+            last_read_at = user_last_read_at.get('last_read_at', None)
             for message in obj.inquirymoderatormessage_set.all():
                 if message.created_at > last_read_at:
                     count += 1
 
         return count
-        
+
 
 class InquiryMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     inquiry_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
 
     class Meta:
         model = InquiryMessage
@@ -236,6 +253,18 @@ class InquiryMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSe
         context = self.context.get('inquiry', {})
         serializer = InquirySerializer(
             obj.inquiry, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'inquiry') or not hasattr(obj.inquiry, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.inquiry.user, 
             context=self.context,
             **context    
         )
@@ -292,12 +321,12 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         return serializer.data
     
     def get_messages(self, obj):
-        if not hasattr(obj, 'inquirymessage_set'):
+        if not hasattr(obj, 'messages'):
             return None
         
         context = self.context.get('inquirymessage', {})
         serializer = InquiryMessageSerializer(
-            obj.inquirymessage_set,
+            obj.messages.all(),
             many=True, 
             context=self.context,
             **context
@@ -305,34 +334,35 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         return serializer.data
     
     def get_last_message(self, obj):
-        if not hasattr(obj, 'inquirymessage_set'):
+        if not hasattr(obj, 'messages'):
             return None
         
         context = self.context.get('inquirymessage', {})
         serializer = InquiryMessageSerializer(
-            obj.inquirymessage_set.last(),
+            obj.messages.last(),
             context=self.context,
             **context
         )
         return serializer.data
     
     def get_unread_messages_count(self, obj):
-        if not hasattr(obj, 'inquirymessage_set'):
+        if not hasattr(obj, 'messages'):
             return None
         
         context = self.context.get('inquirymessage_extra', {})
-        user = context.get('user_last_read_at', None)
-        if not user:
+        user_last_read_at = context.get('user_last_read_at', None)
+        if not user_last_read_at:
             return None
         
-        id = user.get('id', None)
-        if not id:
-            return None
-        
+        if not user_last_read_at.get('id', None):
+            user_last_read_at = user_last_read_at.get(obj.id, None)
+            if not user_last_read_at:
+                return None
+
         count = 0
-        if obj.user.id != id:
-            last_read_at = user.get('last_read_at', None)
-            for message in obj.inquirymessage_set.all():
+        if obj.user.id != user_last_read_at['id']:
+            last_read_at = user_last_read_at.get('last_read_at', None)
+            for message in obj.messages.all():
                 if message.created_at > last_read_at:
                     count += 1
 
