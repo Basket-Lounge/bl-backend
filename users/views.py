@@ -20,8 +20,18 @@ from rest_framework.status import (
 from api.paginators import CustomPageNumberPagination
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
-from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryTypeDisplayName
-from management.serializers import InquiryMessageCreateSerializer, InquiryMessageSerializer, InquirySerializer
+from management.models import (
+    Inquiry, 
+    InquiryMessage, 
+    InquiryModerator, 
+    InquiryModeratorMessage, 
+    InquiryTypeDisplayName
+)
+from management.serializers import (
+    InquiryMessageCreateSerializer, 
+    InquiryMessageSerializer, 
+    InquirySerializer, 
+)
 from teams.models import (
     Post, 
     PostComment, 
@@ -1120,26 +1130,20 @@ class UserViewSet(ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.filter(
-                    inquiry__user=user
-                ).order_by('created_at')
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
-                queryset=InquiryModerator.objects.filter(
-                    inquiry__user=user
-                ).select_related(
+                queryset=InquiryModerator.objects.select_related(
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.filter(
-                            inquiry_moderator__inquiry__user=user
-                        ).order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
@@ -1151,22 +1155,40 @@ class UserViewSet(ViewSet):
         serializer = InquirySerializer(
             paginated_data,
             many=True,
-            fields_exclude=['user_data'],
+            fields_exclude=[
+                'user_data', 
+                'unread_messages_count', 
+                'messages'
+            ],
             context={
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
-                    'fields': ['moderator_data', 'messages']
+                    'fields': [
+                        'moderator_data', 
+                        'messages', 
+                        'last_message',
+                        'unread_messages_count'
+                    ]
                 },
                 'moderator': {
                     'fields': ['id', 'username']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'inquirymoderatormessage_extra': {
+                    'user_last_read_at': {
+                        inquiry.id: {
+                            'id': user.id, 
+                            'last_read_at': inquiry.last_read_at
+                        }
+                        for inquiry in paginated_data
+                    }
                 },
                 'language': {
                     'fields': ['name']
@@ -1183,13 +1205,10 @@ class UserViewSet(ViewSet):
         permission_classes=[IsAuthenticated]
     )
     def get_inquiry(self, request, inquiry_id):
-        user = request.user
-
-        inquiry_ref = Inquiry.objects.filter(user=user).filter(id=inquiry_id).only('id').first()
-        if not inquiry_ref:
-            return Response(status=HTTP_404_NOT_FOUND)
-
-        inquiry = Inquiry.objects.filter(id=inquiry_id).select_related(
+        inquiry = Inquiry.objects.filter(
+            id=inquiry_id, 
+            user=request.user
+        ).select_related(
             'inquiry_type',
             'user'
         ).prefetch_related(
@@ -1197,26 +1216,20 @@ class UserViewSet(ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.filter(
-                    inquiry__id=inquiry_id
-                ).order_by('created_at')
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
-                queryset=InquiryModerator.objects.filter(
-                    inquiry__id=inquiry_id
-                ).select_related(
+                queryset=InquiryModerator.objects.select_related(
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.filter(
-                            inquiry_moderator__inquiry__id=inquiry_id
-                        ).order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
@@ -1224,13 +1237,17 @@ class UserViewSet(ViewSet):
 
         serializer = InquirySerializer(
             inquiry,
-            fields_exclude=['user_data', 'last_message'],
+            fields_exclude=[
+                'user_data', 
+                'last_message', 
+                'unread_messages_count'
+            ],
             context={
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
                     'fields': ['moderator_data', 'messages']
@@ -1239,7 +1256,7 @@ class UserViewSet(ViewSet):
                     'fields': ['id', 'username']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
                 },
                 'language': {
                     'fields': ['name']
@@ -1251,12 +1268,41 @@ class UserViewSet(ViewSet):
     
     @action(
         detail=False,
+        methods=['put'],
+        url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/mark-as-read',
+        permission_classes=[IsAuthenticated]
+    )
+    def mark_inquiry_messages_as_read(self, request, inquiry_id):
+        user = request.user
+        inquiry = Inquiry.objects.filter(
+            id=inquiry_id, 
+            user=user
+        ).first()
+
+        if not inquiry:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        updated_rows = Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
+        if not updated_rows:
+            return Response(status=HTTP_400_BAD_REQUEST)
+
+        return Response(status=HTTP_200_OK)
+    
+    @action(
+        detail=False,
         methods=['post'],
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/messages',
         permission_classes=[IsAuthenticated]
     )
     def post_inquiry_message(self, request, inquiry_id):
         user = request.user
+        inquiry_exists = Inquiry.objects.filter(
+            id=inquiry_id, 
+            user=user
+        ).exists()
+
+        if not inquiry_exists:
+            return Response(status=HTTP_404_NOT_FOUND)
 
         serializer = InquiryMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1265,10 +1311,8 @@ class UserViewSet(ViewSet):
         )
         message_serializer = InquiryMessageSerializer(
             message,
+            fields_exclude=['inquiry_data'],
             context={
-                'inquiry': {
-                    'fields': ['id', 'user_data']
-                },
                 'user': {
                     'fields': ['id', 'username']
                 }
@@ -1283,26 +1327,20 @@ class UserViewSet(ViewSet):
                 'inquiry_type__inquirytypedisplayname_set',
                 queryset=InquiryTypeDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
             Prefetch(
-                'inquirymessage_set',
-                queryset=InquiryMessage.objects.filter(
-                    inquiry__id=inquiry_id
-                ).order_by('created_at')
+                'messages',
+                queryset=InquiryMessage.objects.order_by('created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
-                queryset=InquiryModerator.objects.filter(
-                    inquiry__id=inquiry_id
-                ).select_related(
+                queryset=InquiryModerator.objects.select_related(
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.filter(
-                            inquiry_moderator__inquiry__id=inquiry_id
-                        ).order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
                     )
                 )
             )
@@ -1310,7 +1348,11 @@ class UserViewSet(ViewSet):
 
         serializer = InquirySerializer(
             inquiry,
-            fields_exclude=['user_data', 'messages'],
+            fields_exclude=[
+                'user_data', 
+                'messages', 
+                'unread_messages_count'
+            ],
             context={
                 'user': {
                     'fields': ['id', 'username']
@@ -1319,16 +1361,26 @@ class UserViewSet(ViewSet):
                     'fields': ['display_name', 'language_data']
                 },
                 'inquirymessage': {
-                    'fields_exclude': ['inquiry_data']
+                    'fields_exclude': ['inquiry_data', 'user_data']
                 },
                 'inquirymoderator': {
-                    'fields': ['moderator_data', 'last_message']
+                    'fields': [
+                        'moderator_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
                 },
                 'moderator': {
                     'fields': ['id', 'username']
                 },
                 'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data']
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'inquirymoderatormessage_extra': {
+                    'user_last_read_at': {
+                        'id': user.id,
+                        'last_read_at': inquiry.last_read_at
+                    }
                 },
                 'language': {
                     'fields': ['name']
@@ -1336,7 +1388,7 @@ class UserViewSet(ViewSet):
             }
         )
 
-        inquiry_channel_name = f'inquiries/{inquiry_id}'
+        inquiry_channel_name = f'users/inquiries/{inquiry_id}'
         resp_json = send_message_to_centrifuge(
             inquiry_channel_name,
             message_serializer.data
@@ -1360,9 +1412,50 @@ class UserViewSet(ViewSet):
         
         for moderator in inquiry.inquirymoderator_set.all():
             moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
+
+            inquiry_for_moderators_serializer = InquirySerializer(
+                inquiry,
+                fields_exclude=['user_data', 'messages'],
+                context={
+                    'user': {
+                        'fields': ['id', 'username']
+                    },
+                    'inquirytypedisplayname': {
+                        'fields': ['display_name', 'language_data']
+                    },
+                    'inquirymessage': {
+                        'fields_exclude': ['inquiry_data', 'user_data']
+                    },
+                    'inquirymessage_extra': {
+                        'user_last_read_at': {
+                            'id': moderator.moderator.id,
+                            'last_read_at': moderator.last_read_at
+                        }
+                    },
+                    'inquirymoderator': {
+                        'fields': ['moderator_data', 'last_message', 'unread_messages_count']
+                    },
+                    'moderator': {
+                        'fields': ['id', 'username']
+                    },
+                    'inquirymoderatormessage': {
+                        'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                    },
+                    'inquirymoderatormessage_extra': {
+                        'user_last_read_at': {
+                            'id': moderator.moderator.id,
+                            'last_read_at': moderator.last_read_at
+                        }
+                    },
+                    'language': {
+                        'fields': ['name']
+                    }
+                }
+            )
+
             resp_json = send_message_to_centrifuge(
                 moderator_inquiry_notification_channel_name,
-                serializer.data
+                inquiry_for_moderators_serializer.data
             )
             if resp_json.get('error', None):
                 return Response(
@@ -1377,7 +1470,11 @@ class JWTViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
     authentication_classes = [CookieJWTRefreshAuthentication]
 
-    @action(detail=False, methods=['post'], url_path='refresh')
+    @action(
+        detail=False, 
+        methods=['post'], 
+        url_path='refresh'
+    )
     def refresh(self, request, pk=None):
         refresh_token = request.auth
 
@@ -1420,12 +1517,20 @@ class JWTViewSet(ViewSet):
 
         return response
     
-    @action(detail=False, methods=['get'], url_path='websocket-access')
+    @action(
+        detail=False, 
+        methods=['get'], 
+        url_path='websocket-access'
+    )
     def access(self, request):
         token = generate_websocket_connection_token(request.user.id)
         return Response({'token': str(token)})
 
-    @action(detail=False, methods=['get'], url_path=r'subscription/games/(?P<game_id>[0-9a-zA-Z-]+)/live-chat')
+    @action(
+        detail=False, 
+        methods=['get'], 
+        url_path=r'subscription/games/(?P<game_id>[0-9a-zA-Z-]+)/live-chat'
+    )
     def subscribe_for_live_game_chat(self, request, game_id):
         try:
             Game.objects.get(game_id=game_id)
@@ -1436,7 +1541,11 @@ class JWTViewSet(ViewSet):
         token = generate_websocket_subscription_token(request.user.id, channel_name)
         return Response({'token': str(token)})
     
-    @action(detail=False, methods=['get'], url_path=r'subscription/users/chats/(?P<chat_id>[0-9a-zA-Z-]+)')
+    @action(
+        detail=False, 
+        methods=['get'], 
+        url_path=r'subscription/users/chats/(?P<chat_id>[0-9a-zA-Z-]+)'
+    )
     def subscribe_for_user_chat(self, request, chat_id):
         try:
             UserChat.objects.get(
@@ -1451,8 +1560,40 @@ class JWTViewSet(ViewSet):
         token = generate_websocket_subscription_token(request.user.id, channel_name)
         return Response({'token': str(token)})
     
-    @action(detail=False, methods=['get'], url_path=r'subscription/users/chat-updates')
+    @action(
+        detail=False, 
+        methods=['get'], 
+        url_path=r'subscription/users/chat-updates'
+    )
     def subscribe_for_user_chat_updates(self, request):
         channel_name = f'users/{request.user.id}/chats/updates'
+        token = generate_websocket_subscription_token(request.user.id, channel_name)
+        return Response({'token': str(token)})
+    
+    @action(
+        detail=False, 
+        methods=['get'], 
+        url_path=r'subscription/users/inquiries/(?P<inquiry_id>[0-9a-zA-Z-]+)'
+    )
+    def subscribe_for_user_inquiry(self, request, inquiry_id):
+        try:
+            Inquiry.objects.get(
+                id=inquiry_id, 
+                user=request.user
+            )
+        except Inquiry.DoesNotExist:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        channel_name = f'users/inquiries/{inquiry_id}'
+        token = generate_websocket_subscription_token(request.user.id, channel_name)
+        return Response({'token': str(token)})
+    
+    @action(
+        detail=False, 
+        methods=['get'], 
+        url_path=r'subscription/users/inquiry-updates'
+    )
+    def subscribe_for_user_inquiry_updates(self, request):
+        channel_name = f'users/{request.user.id}/inquiries/updates'
         token = generate_websocket_subscription_token(request.user.id, channel_name)
         return Response({'token': str(token)})
