@@ -1345,6 +1345,7 @@ class UserViewSet(ViewSet):
                 )
             )
         ).first()
+        inquiry.save()
 
         serializer = InquirySerializer(
             inquiry,

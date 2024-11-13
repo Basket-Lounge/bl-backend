@@ -31,6 +31,29 @@ class InquiryCreateSerializer(serializers.Serializer):
         )
 
         return inquiry
+    
+class InquiryUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(min_length=1, max_length=512)
+    inquiry_type = serializers.IntegerField()
+    solved = serializers.BooleanField()
+
+    def update(self, instance, validated_data):
+        title = validated_data.get('title', None)
+        inquiry_type = validated_data.get('inquiry_type', None)
+        solved = validated_data.get('solved', None)
+
+        if isinstance(title, str):
+            instance.title = validated_data['title']
+        if isinstance(inquiry_type, int):
+            inquiry_type = InquiryType.objects.filter(id=validated_data['inquiry_type']).first()
+            if not inquiry_type:
+                raise serializers.ValidationError('Invalid inquiry type')
+            instance.inquiry_type = inquiry_type 
+        if isinstance(solved, bool):
+            instance.solved = validated_data['solved']
+
+        instance.save()
+        return instance
 
 
 class InquiryMessageCreateSerializer(serializers.Serializer):
@@ -206,7 +229,7 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
         if not hasattr(obj, 'inquirymoderatormessage_set'):
             return None
         
-        context = self.context.get('inquirymoderatormessage_extra', {})
+        context = self.context.get('inquirymoderatormessage', {})
         serializer = InquiryModeratorMessageSerializer(
             obj.inquirymoderatormessage_set.last(), 
             context=self.context,
