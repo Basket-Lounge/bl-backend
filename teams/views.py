@@ -20,7 +20,8 @@ from teams.models import (
     PostComment,
     PostCommentLike,
     PostCommentReply,
-    PostCommentStatus, 
+    PostCommentStatus,
+    PostCommentStatusDisplayName, 
     PostLike, 
     PostStatus, 
     PostStatusDisplayName, 
@@ -28,7 +29,7 @@ from teams.models import (
     TeamLike, 
     TeamName
 )
-from teams.serializers import PostStatusSerializer, TeamSerializer
+from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.services import (
     get_all_games_for_team_this_season,
     get_all_teams_season_stats, 
@@ -47,7 +48,7 @@ from users.authentication import CookieJWTAccessAuthentication
 
 from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
 
-from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostSerializer
+from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostSerializer, PostUpdateSerializer
 
 
 # Create your views here.
@@ -75,7 +76,6 @@ class TeamViewSet(viewsets.ViewSet):
         return [permission() for permission in permission_classes]
 
     def retrieve(self, request, pk=None):
-        team = None
         try:
             fields_exclude = []
             team = Team.objects.prefetch_related(
@@ -299,7 +299,18 @@ class TeamViewSet(viewsets.ViewSet):
     )
     def get_post_statuses(self, request):
         statuses = PostStatus.objects.all()
-        serializer = PostStatusSerializer(statuses, many=True)
+        serializer = PostStatusSerializer(
+            statuses, 
+            many=True,
+            context={
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
 
         return Response(serializer.data)
 
@@ -323,6 +334,37 @@ class TeamViewSet(viewsets.ViewSet):
             many=True,
             context={
                 'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return Response(serializer.data)
+    
+    @method_decorator(cache_page(60*60*24))
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'posts/comments/statuses',
+    )
+    def get_post_comment_statuses(self, request):
+        statuses = PostCommentStatus.objects.prefetch_related(
+            Prefetch(
+                'postcommentstatusdisplayname_set',
+                queryset=PostCommentStatusDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            )
+        )
+
+        serializer = PostCommentStatusSerializer(
+            statuses, 
+            many=True,
+            context={
+                'postcommentstatusdisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
                 'language': {
@@ -515,6 +557,22 @@ class TeamViewSet(viewsets.ViewSet):
         )
 
         return Response(serializer.data)
+    
+    @get_team_post.mapping.patch
+    def edit_team_post(self, request, pk=None, post_id=None):
+        try:
+            post = Post.objects.get(team__id=pk, id=post_id, user=request.user)
+        except Post.DoesNotExist:
+            return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
+
+        serializer = PostUpdateSerializer(post, data=request.data, partial=True) 
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            {'message': 'Post updated successfully!'}, 
+            status=HTTP_200_OK
+        )
 
     @action(
         detail=True,
