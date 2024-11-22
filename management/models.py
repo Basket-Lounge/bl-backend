@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 import uuid
 from django.db import models
 
@@ -10,7 +9,8 @@ class ReportType(models.Model):
 
     def __str__(self):
         return self.name
-    
+
+
 class ReportTypeDisplayName(models.Model):
     id = models.SmallAutoField(primary_key=True)
     report_type = models.ForeignKey(ReportType, on_delete=models.CASCADE)
@@ -19,6 +19,7 @@ class ReportTypeDisplayName(models.Model):
 
     def __str__(self):
         return self.display_name
+
 
 class Report(models.Model):
     id = models.UUIDField(
@@ -37,7 +38,7 @@ class Report(models.Model):
         on_delete=models.CASCADE, 
         related_name='accused'
     )
-    solved = models.BooleanField(default=False)
+    resolved = models.BooleanField(default=False)
     title = models.CharField(max_length=512)
     description = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -54,7 +55,8 @@ class InquiryType(models.Model):
 
     def __str__(self):
         return self.name
-    
+
+
 class InquiryTypeDisplayName(models.Model):
     id = models.SmallAutoField(primary_key=True)
     inquiry_type = models.ForeignKey(InquiryType, on_delete=models.CASCADE)

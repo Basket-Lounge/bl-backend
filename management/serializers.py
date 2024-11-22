@@ -1,8 +1,9 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType, InquiryTypeDisplayName
+from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType, InquiryTypeDisplayName, Report, ReportType, ReportTypeDisplayName
 from teams.serializers import LanguageSerializer
+from users.models import User
 from users.serializers import UserSerializer
 
 
@@ -35,22 +36,22 @@ class InquiryCreateSerializer(serializers.Serializer):
 class InquiryUpdateSerializer(serializers.Serializer):
     title = serializers.CharField(min_length=1, max_length=512)
     inquiry_type = serializers.IntegerField()
-    solved = serializers.BooleanField()
+    resolved = serializers.BooleanField()
 
     def update(self, instance, validated_data):
         title = validated_data.get('title', None)
         inquiry_type = validated_data.get('inquiry_type', None)
-        solved = validated_data.get('solved', None)
+        resolved = validated_data.get('resolved', None)
 
         if isinstance(title, str):
-            instance.title = validated_data['title']
+            instance.title = title
         if isinstance(inquiry_type, int):
             inquiry_type = InquiryType.objects.filter(id=validated_data['inquiry_type']).first()
             if not inquiry_type:
                 raise serializers.ValidationError('Invalid inquiry type')
             instance.inquiry_type = inquiry_type 
-        if isinstance(solved, bool):
-            instance.solved = validated_data['solved']
+        if isinstance(resolved, bool):
+            instance.solved = resolved
 
         instance.save()
         return instance
@@ -390,3 +391,160 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
                     count += 1
 
         return count
+    
+
+class ReportTypeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    display_names = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReportType
+        fields = '__all__'
+
+    def get_display_names(self, obj):
+        if not hasattr(obj, 'reporttypedisplayname_set'):
+            return None
+        
+        context = self.context.get('reporttypedisplayname', {})
+        serializer = ReportTypeDisplayNameSerializer(
+            obj.reporttypedisplayname_set, 
+            many=True, 
+            context=self.context,
+            **context
+        )
+
+        return serializer.data
+
+
+class ReportTypeDisplayNameSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    report_type_data = serializers.SerializerMethodField()
+    language_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReportTypeDisplayName
+        exclude = ('report_type', 'language')
+
+    def get_report_type_data(self, obj):
+        if not hasattr(obj, 'report_type'):
+            return None
+        
+        context = self.context.get('report_type', {})
+        serializer = ReportTypeSerializer(
+            obj.report_type, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+    def get_language_data(self, obj):
+        if not hasattr(obj, 'language'):
+            return None
+        
+        context = self.context.get('language', {})
+        serializer = LanguageSerializer(
+            obj.language, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+
+class ReportSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    type_data = serializers.SerializerMethodField()
+    accused_data = serializers.SerializerMethodField()
+    accuser_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Report
+        exclude = ('type', 'accused', 'accuser')
+
+    def get_type_data(self, obj):
+        if not hasattr(obj, 'type'):
+            return None
+        
+        context = self.context.get('reporttype', {})
+        serializer = ReportTypeSerializer(
+            obj.type, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+    def get_accused_data(self, obj):
+        if not hasattr(obj, 'accused'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.accused, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+    
+    def get_accuser_data(self, obj):
+        if not hasattr(obj, 'accuser'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.accuser, 
+            context=self.context,
+            **context    
+        )
+        return serializer.data
+
+
+class ReportCreateSerializer(serializers.Serializer):
+    report_type = serializers.IntegerField()
+    title = serializers.CharField(min_length=1, max_length=512)
+    description = serializers.CharField(min_length=1, max_length=4096)
+
+    def create(self, validated_data):
+        accuser = validated_data.get('accuser', None)
+        if not accuser:
+            raise serializers.ValidationError('Accuser is required')
+        
+        report_type = ReportType.objects.filter(id=validated_data['report_type']).first()
+        if not report_type:
+            raise serializers.ValidationError('Invalid report type')
+
+        accused = validated_data.get('accused', None) 
+        if not accused:
+            raise serializers.ValidationError('Invalid accused')
+        
+        report = Report.objects.create(
+            accuser=accuser,
+            type=report_type,
+            accused=accused,
+            title=validated_data['title'],
+            description=validated_data['description'],
+        )
+
+        return report
+    
+
+class ReportUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(min_length=1, max_length=512)
+    description = serializers.CharField(min_length=1, max_length=4096)
+    report_type = serializers.IntegerField()
+    solved = serializers.BooleanField()
+
+    def update(self, instance, validated_data):
+        title = validated_data.get('title', None)
+        description = validated_data.get('description', None)
+        report_type = validated_data.get('report_type', None)
+        solved = validated_data.get('solved', None)
+
+        if isinstance(title, str):
+            instance.title = validated_data['title']
+        if isinstance(description, str):
+            instance.description = validated_data['description']
+        if isinstance(report_type, int):
+            report_type = ReportType.objects.filter(id=validated_data['report_type']).first()
+            if not report_type:
+                raise serializers.ValidationError('Invalid report type')
+            instance.report_type = report_type
+        if isinstance(solved, bool):
+            instance.solved = validated_data['solved']
+
+        instance.save()
