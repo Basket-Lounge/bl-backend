@@ -61,7 +61,6 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
 
 from users.utils import (
-    calculate_level, 
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
 )
@@ -112,12 +111,14 @@ class UserViewSet(ViewSet):
         serializer = UserSerializer(
             user,
             fields=(
+                'id',
                 'username', 
                 'email', 
-                'role',
+                'role_data',
                 'level',
                 'introduction', 
                 'is_profile_visible',
+                'chat_blocked',
                 'likes_count'
             ),
         )
@@ -126,17 +127,21 @@ class UserViewSet(ViewSet):
 
     def retrieve(self, request, pk=None):
         fields = [
+            'id',
             'username',
-            'role',
+            'role_data',
             'level',
             'introduction',
             'is_profile_visible',
+            'chat_blocked',
             'likes_count'
         ]
 
         try:
             user = User.objects.select_related('role').only(
-                'username', 'email', 'role', 'experience'
+                'username', 'role', 'experience', 'introduction', 'is_profile_visible', 'id', 'chat_blocked'
+            ).prefetch_related(
+                'liked_user'
             )
 
             if request.user.is_authenticated:

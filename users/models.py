@@ -111,7 +111,8 @@ class UserLike(models.Model):
     liked_user = models.ForeignKey(
         User, 
         on_delete=models.CASCADE, 
-        related_name='liked_user'
+        related_name='liked_user',
+        help_text="User that the user liked"
     )
 
     def __str__(self):

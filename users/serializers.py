@@ -14,7 +14,7 @@ from dj_rest_auth.registration.serializers import SocialLoginSerializer
 from requests.exceptions import HTTPError
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.models import Post, PostComment, PostCommentReply, PostCommentReplyStatus
+from teams.models import Post, PostComment, PostCommentReply, PostCommentReplyStatus, PostCommentStatus, PostStatus
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamLikeSerializer, TeamSerializer
 from users.models import Role, UserChat, UserChatParticipant, UserChatParticipantMessage
 from users.utils import calculate_level
@@ -129,7 +129,7 @@ class RoleSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
 
 
 class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
-    role = serializers.SerializerMethodField()
+    role_data = serializers.SerializerMethodField()
     teamlike_set = serializers.SerializerMethodField()
     level = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField()
@@ -137,9 +137,9 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
 
     class Meta:
         model = get_user_model()
-        fields = '__all__'
+        exclude = ('role',)
     
-    def get_role(self, obj):
+    def get_role_data(self, obj):
         if not hasattr(obj, 'role'):
             return None
         
@@ -152,6 +152,9 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         return serializer.data
     
     def get_level(self, obj):
+        if not hasattr(obj, 'experience'):
+            return None
+
         return calculate_level(obj.experience)
     
     def get_teamlike_set(self, obj):
@@ -168,12 +171,47 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         return serializer.data
 
     def get_likes_count(self, obj):
-        return obj.liked_user.count()
+        if not hasattr(obj, 'liked_user'):
+            return None
+
+        return obj.liked_user.all().count()
     
     def get_liked(self, obj):
         return obj.liked
-
     
+
+class UserUpdateSerializer(serializers.Serializer):
+    introduction = serializers.CharField(min_length=1)
+    is_profile_visible = serializers.BooleanField()
+    chat_blocked = serializers.BooleanField()
+    role = serializers.IntegerField()
+
+    def update(self, instance, validated_data):
+        introduction = validated_data.get('introduction', None)
+        is_profile_visible = validated_data.get('is_profile_visible', None)
+        chat_blocked = validated_data.get('chat_blocked', None)
+        role = validated_data.get('role', None)
+
+        if introduction:
+            instance.introduction = introduction
+
+        if is_profile_visible is not None:
+            instance.is_profile_visible = is_profile_visible
+
+        if chat_blocked is not None:
+            instance.chat_blocked = chat_blocked
+
+        if role:
+            role_obj = Role.objects.filter(id=role).first()
+            if role_obj:
+                if role_obj.name == 'admin':
+                    raise serializers.ValidationError('Cannot assign admin role to user')
+
+                instance.role = role_obj
+            
+        instance.save()
+        return instance
+
 
 class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     status_data = serializers.SerializerMethodField()
@@ -231,7 +269,32 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     
     def get_liked(self, obj):
         return obj.liked
-    
+
+
+class PostUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(min_length=1, max_length=128)
+    content = serializers.CharField(min_length=1)
+    status = serializers.IntegerField()
+
+    def update(self, instance, validated_data):
+        status = validated_data.get('status', None)
+        title = validated_data.get('title', None)
+        content = validated_data.get('content', None)
+
+        if title:
+            instance.title = title
+
+        if content:
+            instance.content = content
+
+        if status is not None:
+            status_obj = PostStatus.objects.filter(id=status).first()
+            if status_obj:
+                instance.status = status_obj
+
+        instance.save()
+        return instance
+
 
 class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     post_data = serializers.SerializerMethodField()
@@ -288,9 +351,31 @@ class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeria
         return obj.postcommentlike_set.count()
     
     def get_liked(self, obj):
+        if not hasattr(obj, 'liked'):
+            return None
+
         return obj.liked
     
 
+class PostCommentUpdateSerializer(serializers.Serializer):
+    content = serializers.CharField(min_length=1)
+    status = serializers.IntegerField()
+
+    def update(self, instance, validated_data):
+        status = validated_data.get('status', None)
+        content = validated_data.get('content', None)
+
+        if content:
+            instance.content = content
+
+        if status is not None:
+            status_obj = PostCommentStatus.objects.filter(id=status).first()
+            if status_obj:
+                instance.status = status_obj
+
+        instance.save()
+        return instance
+    
 
 class PostCommentReplyStatusSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     class Meta:

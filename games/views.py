@@ -21,7 +21,7 @@ from users.utils import validate_websocket_subscription_token
 
 
 class GameViewSet(viewsets.ViewSet):
-    @method_decorator(cache_page(60*5))
+    @method_decorator(cache_page(60*1))
     @action(detail=False, methods=['get'])
     def today(self, request):
         games, linescores = get_today_games()
@@ -53,7 +53,7 @@ class GameViewSet(viewsets.ViewSet):
 
         return Response(combine_games_and_linescores(serializer.data, linescore_serializer.data))
 
-    @method_decorator(cache_page(60*5)) 
+    @method_decorator(cache_page(60*1)) 
     def retrieve(self, request, pk=None):
         game = Game.objects.select_related(
             'home_team', 'visitor_team'
