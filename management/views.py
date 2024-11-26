@@ -31,6 +31,7 @@ from management.serializers import (
 from management.services import ( 
     create_post_comment_queryset_without_prefetch,
     create_post_queryset_without_prefetch,
+    create_userchat_queryset_without_prefetch,
     filter_and_fetch_inquiries_in_desc_order_based_on_updated_at,
     filter_and_fetch_inquiry,
     send_inquiry_message_to_live_chat,
@@ -46,7 +47,7 @@ from management.services import (
     serialize_report,
     serialize_reports
 )
-from teams.models import Post, PostComment, PostCommentLike, PostCommentReply, PostLike, PostStatus, PostStatusDisplayName, Team, TeamLike
+from teams.models import Post, PostComment, PostCommentLike, PostCommentReply, PostCommentStatus, PostLike, PostStatus, PostStatusDisplayName, Team, TeamLike
 from teams.serializers import TeamSerializer
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
 from users.models import Role, User, UserChat, UserChatParticipant, UserLike
@@ -769,6 +770,18 @@ class UserManagementViewSet(viewsets.ViewSet):
         if not user:
             return Response(status=HTTP_404_NOT_FOUND)
         
+        if request.user == user:
+            return Response(
+                status=HTTP_400_BAD_REQUEST, 
+                data={'error': 'You cannot update your own account'}
+            )
+
+        if request.user.role.weight >= user.role.weight:
+            return Response(
+                status=HTTP_400_BAD_REQUEST, 
+                data={'error': 'You cannot update a user with the same or higher role'}
+            )
+
         serializer = UserUpdateSerializer(
             user, 
             data=request.data,
@@ -1056,7 +1069,7 @@ class UserManagementViewSet(viewsets.ViewSet):
         if not comment:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        comment.status = PostStatus.objects.get(name='deleted')
+        comment.status = PostCommentStatus.objects.get(name='deleted')
         comment.save()
 
         return Response(status=HTTP_200_OK)
@@ -1067,8 +1080,10 @@ class UserManagementViewSet(viewsets.ViewSet):
         url_path=r'chats'
     )
     def get_user_chats(self, request, pk=None):
-        chat_query = UserChat.objects.filter(
-            userchatparticipant__user__id=pk,
+        chats = create_userchat_queryset_without_prefetch(
+            request,
+            fields_only=[],
+            userchatparticipant__user__id=pk 
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
@@ -1078,10 +1093,10 @@ class UserManagementViewSet(viewsets.ViewSet):
                     'user',
                 )
             )
-        ).order_by('-updated_at')
+        )
 
         pagination = CustomPageNumberPagination()
-        paginated_data = pagination.paginate_queryset(chat_query, request)
+        paginated_data = pagination.paginate_queryset(chats, request)
 
         serializer = UserChatSerializer(
             paginated_data,

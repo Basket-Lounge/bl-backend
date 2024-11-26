@@ -1,5 +1,6 @@
+from datetime import datetime, timedelta
 from django.conf import settings
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Count
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.db.models import Exists, OuterRef
@@ -441,6 +442,81 @@ class TeamViewSet(viewsets.ViewSet):
             'status__id', 
             'status__name'
         )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+        else:
+            fields_exclude.append('liked')
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(posts, request)
+
+        serializer = PostSerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'posts/popular'
+    )
+    def get_popular_posts(self, request, pk=None):
+        fields_exclude = ['content']
+        posts = Post.objects.annotate(
+            likes_count=Count('postlike'),
+        ).order_by(
+            '-likes_count'
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postlike_set',
+                queryset=PostLike.objects.all()
+            ),
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        )[:10]
+        # ).filter(
+        #     created_at__gte=datetime.now() - timedelta(hours=24)
+        # )
 
         if request.user.is_authenticated:
             posts = posts.annotate(
