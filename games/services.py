@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import List
 import pytz
 
 from games.models import Game, LineScore, TeamStatistics
 
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.db import transaction
 
 from players.models import Player, PlayerStatistics
@@ -301,3 +302,51 @@ def update_team_statistics(game, team, statistics):
             'two_pointers_percentage': statistics.get('twoPointersPercentage', 0)
         }
     )
+
+def create_game_queryset_without_prefetch(
+    request, 
+    fields_only=[], 
+    **kwargs
+):
+    """
+    Create a queryset for the Game model without prefetching and selecting related models.\n
+    - request: request object.\n
+    - fields_only: list of fields to return in the queryset.\n
+    - **kwargs: keyword arguments to filter
+    """
+
+    if kwargs is not None:
+        queryset = Game.objects.filter(**kwargs)
+    else:
+        queryset = Game.objects.all()
+
+    teams_filter : str | None = request.query_params.get('teams', None)
+    if teams_filter is not None:
+        teams_filter = teams_filter.split(',')
+        queryset = queryset.filter(
+            Q(home_team__symbol__in=teams_filter) | Q(visitor_team__symbol__in=teams_filter)
+        ).distinct()
+
+    date_start_filter : str | None = request.query_params.get('date-range-start', None)
+    date_end_filter : str | None = request.query_params.get('date-range-end', None)
+
+    if date_start_filter is not None and date_end_filter is not None:
+        try:
+            date_start = datetime.fromisoformat(date_start_filter) - timedelta(days=1)
+            date_end = datetime.fromisoformat(date_end_filter) + timedelta(days=1)
+
+            queryset = queryset.filter(
+                game_date_est__range=[
+                    date_start, 
+                    date_end
+                ]
+            )
+        except ValueError:
+            pass
+
+    queryset = queryset.order_by('game_date_est')
+
+    if fields_only:
+        return queryset.only(*fields_only)
+
+    return queryset

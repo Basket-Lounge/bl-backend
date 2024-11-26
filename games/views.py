@@ -1,6 +1,7 @@
 from datetime import datetime
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
+from django.db.models import Prefetch
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -12,11 +13,13 @@ from rest_framework.status import (
     HTTP_500_INTERNAL_SERVER_ERROR
 )
 
+from api.paginators import CustomPageNumberPagination
 from api.websocket import send_message_to_centrifuge
 from games.models import Game, GameChat, GameChatMessage, LineScore
 from games.serializers import GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
-from games.services import combine_game_and_linescores, combine_games_and_linescores, get_today_games
+from games.services import combine_game_and_linescores, combine_games_and_linescores, create_game_queryset_without_prefetch, get_today_games
 from players.models import PlayerStatistics
+from teams.models import TeamName
 from users.utils import validate_websocket_subscription_token
 
 
@@ -52,6 +55,63 @@ class GameViewSet(viewsets.ViewSet):
         )
 
         return Response(combine_games_and_linescores(serializer.data, linescore_serializer.data))
+    
+    def list(self, request):
+        all_team_names = TeamName.objects.select_related('language')
+
+        games = create_game_queryset_without_prefetch(
+            request
+        ).prefetch_related(
+            Prefetch(
+                'line_scores',
+                queryset=LineScore.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=all_team_names
+                    )
+                )
+            ),
+            Prefetch(
+                'home_team__teamname_set',
+                queryset=all_team_names
+            ),
+            Prefetch(
+                'visitor_team__teamname_set',
+                queryset=all_team_names
+            )
+        ).select_related(
+            'home_team', 'visitor_team'
+        ).all()
+
+        pagination = CustomPageNumberPagination()
+        paginated_games = pagination.paginate_queryset(games, request)
+
+        serializer = GameSerializer(
+            paginated_games,
+            many=True,
+            fields_exclude=[
+                'home_team_statistics',
+                'visitor_team_statistics',
+                'home_team_player_statistics',
+                'visitor_team_player_statistics'
+            ],
+            context={
+                'linescore': {
+                    'fields_exclude': ['id', 'game']
+                },
+                'team': {
+                    'fields': ['id', 'symbol', 'teamname_set']
+                },
+                'teamname': {
+                    'fields': ['name', 'language']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
 
     @method_decorator(cache_page(60*1)) 
     def retrieve(self, request, pk=None):

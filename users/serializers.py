@@ -185,15 +185,21 @@ class UserUpdateSerializer(serializers.Serializer):
     is_profile_visible = serializers.BooleanField()
     chat_blocked = serializers.BooleanField()
     role = serializers.IntegerField()
+    username = serializers.CharField(min_length=1, max_length=128)
 
     def update(self, instance, validated_data):
         introduction = validated_data.get('introduction', None)
         is_profile_visible = validated_data.get('is_profile_visible', None)
         chat_blocked = validated_data.get('chat_blocked', None)
         role = validated_data.get('role', None)
+        username = validated_data.get('username', None)
 
         if introduction:
-            instance.introduction = introduction
+            stripped_introduction = introduction.strip()
+            if not stripped_introduction:
+                raise serializers.ValidationError('Introduction cannot be empty')
+
+            instance.introduction = stripped_introduction
 
         if is_profile_visible is not None:
             instance.is_profile_visible = is_profile_visible
@@ -201,10 +207,22 @@ class UserUpdateSerializer(serializers.Serializer):
         if chat_blocked is not None:
             instance.chat_blocked = chat_blocked
 
+        if username:
+            User = get_user_model()
+            stripped_username = username.strip()
+            if not stripped_username:
+                raise serializers.ValidationError('Username cannot be empty')
+
+            if instance.username != stripped_username:
+                if User.objects.filter(username=stripped_username).exists():
+                    raise serializers.ValidationError('Username already exists')
+
+            instance.username = username
+
         if role:
             role_obj = Role.objects.filter(id=role).first()
             if role_obj:
-                if role_obj.name == 'admin':
+                if role_obj.weight <= 2:
                     raise serializers.ValidationError('Cannot assign admin role to user')
 
                 instance.role = role_obj

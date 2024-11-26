@@ -44,11 +44,12 @@ from teams.models import (
 )
 from teams.serializers import TeamSerializer
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
-from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
+from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.serializers import (
     CustomSocialLoginSerializer, 
     PostCommentSerializer, 
     PostSerializer,
+    RoleSerializer,
     UserChatParticipantMessageCreateSerializer,
     UserChatParticipantMessageSerializer,
     UserChatSerializer, 
@@ -477,6 +478,17 @@ class UserViewSet(ViewSet):
         )
 
         return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'roles',
+    )
+    def get_roles(self, request):
+        roles = Role.objects.all()
+        serializer = RoleSerializer(roles, many=True)
+
+        return Response(serializer.data)
     
     @action(
         detail=True,
