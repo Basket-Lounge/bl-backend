@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 
 
@@ -116,6 +117,15 @@ class PlayerStatistics(models.Model):
 
     def __str__(self):
         return f"{self.player.first_name} {self.player.last_name} - {self.game.game_code}"
+    
+
+class PlayerRanking(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False, default=uuid.uuid4)
+    player = models.ForeignKey(Player, on_delete=models.CASCADE)
+    ranking = models.IntegerField(unique=True)
+
+    def __str__(self):
+        return f"{self.player.first_name} {self.player.last_name} - {self.ranking}"
 
     
 class PlayerCareerStatistics(models.Model):

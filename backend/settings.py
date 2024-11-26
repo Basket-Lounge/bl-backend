@@ -258,7 +258,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "teams.tasks.update_teams_roster",
         "schedule": crontab(minute=0, hour=5),
         "options": {"queue": "low_priority"},
-    }
+    },
+    "update_top_10_players": {
+        "task": "players.tasks.update_top_10_players",
+        "schedule": crontab(minute="*/1"),
+        "options": {"queue": "low_priority"},
+    },
 }
 
 ## Cache settings
