@@ -28,6 +28,7 @@ class PlayersViewSet(viewsets.ViewSet):
 
         serializer = PlayerSerializer(
             top_players, 
+            fields_exclude=('season_stats',),
             many=True,
             context={
                 'team': {
