@@ -3,8 +3,10 @@ from rest_framework import serializers
 from api.mixins import DynamicFieldsSerializerMixin
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType, InquiryTypeDisplayName, Report, ReportType, ReportTypeDisplayName
 from teams.serializers import LanguageSerializer
-from users.models import User
+from users.models import Role
 from users.serializers import UserSerializer
+
+from django.contrib.auth import get_user_model
 
 
 class InquiryCreateSerializer(serializers.Serializer):
@@ -36,12 +38,12 @@ class InquiryCreateSerializer(serializers.Serializer):
 class InquiryUpdateSerializer(serializers.Serializer):
     title = serializers.CharField(min_length=1, max_length=512)
     inquiry_type = serializers.IntegerField()
-    resolved = serializers.BooleanField()
+    solved = serializers.BooleanField()
 
     def update(self, instance, validated_data):
         title = validated_data.get('title', None)
         inquiry_type = validated_data.get('inquiry_type', None)
-        resolved = validated_data.get('resolved', None)
+        solved = validated_data.get('solved', None)
 
         if isinstance(title, str):
             instance.title = title
@@ -50,8 +52,8 @@ class InquiryUpdateSerializer(serializers.Serializer):
             if not inquiry_type:
                 raise serializers.ValidationError('Invalid inquiry type')
             instance.inquiry_type = inquiry_type 
-        if isinstance(resolved, bool):
-            instance.solved = resolved
+        if isinstance(solved, bool):
+            instance.solved = solved
 
         instance.save()
         return instance
@@ -219,7 +221,7 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
         
         context = self.context.get('inquirymoderatormessage', {})
         serializer = InquiryModeratorMessageSerializer(
-            obj.inquirymoderatormessage_set, 
+            obj.inquirymoderatormessage_set.all()[:50],
             many=True, 
             context=self.context,
             **context
@@ -230,9 +232,13 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
         if not hasattr(obj, 'inquirymoderatormessage_set'):
             return None
         
+        messages = obj.inquirymoderatormessage_set.all()
+        if not messages:
+            return None
+        
         context = self.context.get('inquirymoderatormessage', {})
         serializer = InquiryModeratorMessageSerializer(
-            obj.inquirymoderatormessage_set.last(), 
+            obj.inquirymoderatormessage_set.all()[0],
             context=self.context,
             **context
         )
@@ -337,7 +343,7 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         
         context = self.context.get('inquirymoderator', {})
         serializer = InquiryModeratorSerializer(
-            obj.inquirymoderator_set, 
+            obj.inquirymoderator_set.all(),
             many=True, 
             context=self.context,
             **context
@@ -350,7 +356,7 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         
         context = self.context.get('inquirymessage', {})
         serializer = InquiryMessageSerializer(
-            obj.messages.all(),
+            obj.messages.all()[:50],
             many=True, 
             context=self.context,
             **context
@@ -361,9 +367,13 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         if not hasattr(obj, 'messages'):
             return None
         
+        messages = obj.messages.all()
+        if not messages:
+            return None
+        
         context = self.context.get('inquirymessage', {})
         serializer = InquiryMessageSerializer(
-            obj.messages.last(),
+            messages[0],
             context=self.context,
             **context
         )
@@ -548,3 +558,53 @@ class ReportUpdateSerializer(serializers.Serializer):
             instance.solved = validated_data['solved']
 
         instance.save()
+
+class UserUpdateSerializer(serializers.Serializer):
+    introduction = serializers.CharField(min_length=1)
+    is_profile_visible = serializers.BooleanField()
+    chat_blocked = serializers.BooleanField()
+    role = serializers.IntegerField()
+    username = serializers.CharField(min_length=1, max_length=128)
+
+    def update(self, instance, validated_data):
+        introduction = validated_data.get('introduction', None)
+        is_profile_visible = validated_data.get('is_profile_visible', None)
+        chat_blocked = validated_data.get('chat_blocked', None)
+        role = validated_data.get('role', None)
+        username = validated_data.get('username', None)
+
+        if introduction:
+            stripped_introduction = introduction.strip()
+            if not stripped_introduction:
+                raise serializers.ValidationError('Introduction cannot be empty')
+
+            instance.introduction = stripped_introduction
+
+        if is_profile_visible is not None:
+            instance.is_profile_visible = is_profile_visible
+
+        if chat_blocked is not None:
+            instance.chat_blocked = chat_blocked
+
+        if username:
+            User = get_user_model()
+            stripped_username = username.strip()
+            if not stripped_username:
+                raise serializers.ValidationError('Username cannot be empty')
+
+            if instance.username != stripped_username:
+                if User.objects.filter(username=stripped_username).exists():
+                    raise serializers.ValidationError('Username already exists')
+
+            instance.username = username
+
+        if role:
+            role_obj = Role.objects.filter(id=role).first()
+            if role_obj:
+                if role_obj.weight <= 2:
+                    raise serializers.ValidationError('Cannot assign admin role to user')
+
+                instance.role = role_obj
+            
+        instance.save()
+        return instance

@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from rest_framework import viewsets
 from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 
@@ -26,12 +27,11 @@ from management.serializers import (
     InquiryTypeSerializer,
     InquiryUpdateSerializer,
     ReportCreateSerializer,
-    ReportTypeSerializer
+    ReportTypeSerializer,
+    UserUpdateSerializer
 )
 from management.services import ( 
-    create_post_comment_queryset_without_prefetch,
-    create_post_queryset_without_prefetch,
-    create_userchat_queryset_without_prefetch,
+    UserManagementService,
     filter_and_fetch_inquiries_in_desc_order_based_on_updated_at,
     filter_and_fetch_inquiry,
     send_inquiry_message_to_live_chat,
@@ -47,11 +47,11 @@ from management.services import (
     serialize_report,
     serialize_reports
 )
-from teams.models import Post, PostComment, PostCommentLike, PostCommentReply, PostCommentStatus, PostLike, PostStatus, PostStatusDisplayName, Team, TeamLike
+from teams.models import Post, PostComment, PostCommentStatus, PostLike, PostStatus, PostStatusDisplayName, Team, TeamLike
 from teams.serializers import TeamSerializer
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
-from users.models import Role, User, UserChat, UserChatParticipant, UserLike
-from users.serializers import PostCommentSerializer, PostCommentUpdateSerializer, PostSerializer, PostUpdateSerializer, RoleSerializer, UserChatSerializer, UserSerializer, UserUpdateSerializer
+from users.models import Role, User,  UserLike
+from users.serializers import PostCommentSerializer, PostCommentUpdateSerializer, PostSerializer, PostUpdateSerializer, RoleSerializer, UserChatSerializer, UserSerializer
 from users.services import create_user_queryset_without_prefetch
 from users.utils import generate_websocket_subscription_token
 
@@ -198,7 +198,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     def list(self, request):
-        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at()
+        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(request)
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
@@ -261,6 +261,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
     )
     def list_unassigned_inquiries(self, request):
         inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+            request,
             inquirymoderator__isnull=True
         )
 
@@ -277,6 +278,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
     )
     def list_assigned_inquiries(self, request):
         inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+            request,
             inquirymoderator__isnull=False
         )
 
@@ -293,6 +295,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
     )
     def list_solved_inquiries(self, request):
         inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+            request,
             solved=True
         )
 
@@ -309,6 +312,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
     )
     def list_unsolved_inquiries(self, request):
         inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+            request,
             solved=False
         )
 
@@ -325,6 +329,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
     )
     def list_my_inquiries(self, request):
         inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+            request,
             inquirymoderator__moderator=request.user
         )
 
@@ -380,6 +385,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
                 moderator=request.user
             ).update(in_charge=True)
 
+        inquiry.updated_at = datetime.now(timezone.utc)
         inquiry.save()
 
         send_new_moderator_to_live_chat(inquiry, request.user.id)
@@ -433,6 +439,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         message = message_serializer.save(inquiry_moderator=inquiry_moderator)
 
         inquiry = filter_and_fetch_inquiry(id=pk)
+        inquiry.updated_at = datetime.now(timezone.utc)
         inquiry.save()
 
         send_inquiry_message_to_live_chat(message, inquiry.id)
@@ -702,21 +709,10 @@ class UserManagementViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
-        queryset = create_user_queryset_without_prefetch(
-            request, 
-            fields_only=[
-                'id', 
-                'username', 
-                'email',
-                'role__id',
-                'role__name',
-                'role__description',
-                'role__weight'
-            ]
-        ).select_related('role')
+        users = UserManagementService.get_user_list(request)
 
         pagination = CustomPageNumberPagination()
-        users = pagination.paginate_queryset(queryset, request)
+        users = pagination.paginate_queryset(users, request)
 
         serializer = UserSerializer(
             users, 
@@ -741,6 +737,10 @@ class UserManagementViewSet(viewsets.ViewSet):
                 'liked_user',
                 queryset=UserLike.objects.all()
             ),
+            Prefetch(
+                'teamlike_set',
+                queryset=TeamLike.objects.select_related('team')
+            )
         ).first()
 
         if not user:
@@ -759,7 +759,13 @@ class UserManagementViewSet(viewsets.ViewSet):
                 'is_profile_visible',
                 'chat_blocked',
                 'likes_count',
-            ]
+                'favorite_team'
+            ],
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                }
+            }
         )
 
         return Response(serializer.data)
@@ -797,6 +803,10 @@ class UserManagementViewSet(viewsets.ViewSet):
                 'liked_user',
                 queryset=UserLike.objects.all()
             ),
+            Prefetch(
+                'teamlike_set',
+                queryset=TeamLike.objects.select_related('team')
+            )
         ).first()
 
         serializer = UserSerializer(
@@ -812,7 +822,13 @@ class UserManagementViewSet(viewsets.ViewSet):
                 'is_profile_visible',
                 'chat_blocked',
                 'likes_count',
-            ]
+                'favorite_team'
+            ],
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                }
+            }
         )
 
         return Response(serializer.data)
@@ -902,37 +918,7 @@ class UserManagementViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
 
         fields_exclude = ['content', 'liked']
-        posts = create_post_queryset_without_prefetch(
-            request,
-            fields_only=[
-                'id',
-                'title',
-                'created_at', 
-                'updated_at', 
-                'user__id', 
-                'user__username', 
-                'team__id', 
-                'team__symbol', 
-                'status__id', 
-                'status__name'
-            ],
-            user=user
-        ).prefetch_related(
-            Prefetch(
-                'postlike_set',
-                queryset=PostLike.objects.all()
-            ),
-            Prefetch(
-                'postcomment_set',
-                queryset=PostComment.objects.all()
-            ),
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                ).all()
-            ),
-        )
+        posts = UserManagementService.get_user_posts(request, pk)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
@@ -981,40 +967,7 @@ class UserManagementViewSet(viewsets.ViewSet):
         url_path=r'comments'
     )
     def get_user_comments(self, request, pk=None):
-        comments = create_post_comment_queryset_without_prefetch(
-            request, 
-            fields_only=[
-                'id',
-                'content',
-                'created_at',
-                'updated_at',
-                'user__id',
-                'user__username',
-                'status__id',
-                'status__name',
-                'post__id',
-                'post__title',
-                'post__team__id',
-                'post__team__symbol',
-                'post__user__id',
-                'post__user__username'
-            ],
-            user__id=pk
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.all()
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.all()
-            ),
-        ).select_related(
-            'user',
-            'status',
-            'post__team',
-            'post__user'
-        )
+        comments = UserManagementService.get_user_comments(request, pk)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
@@ -1080,21 +1033,7 @@ class UserManagementViewSet(viewsets.ViewSet):
         url_path=r'chats'
     )
     def get_user_chats(self, request, pk=None):
-        chats = create_userchat_queryset_without_prefetch(
-            request,
-            fields_only=[],
-            userchatparticipant__user__id=pk 
-        ).prefetch_related(
-            Prefetch(
-                'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    'userchatparticipantmessage_set',
-                ).select_related(
-                    'user',
-                )
-            )
-        )
-
+        chats = UserManagementService.get_user_chats(request, pk)
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(chats, request)
 
@@ -1126,21 +1065,7 @@ class UserManagementViewSet(viewsets.ViewSet):
         url_path=r'chats/(?P<chat_id>[0-9a-zA-Z-]+)'
     )
     def get_user_chat(self, request, pk=None, chat_id=None):
-        chat = UserChat.objects.filter(
-            userchatparticipant__user__id=pk
-        ).filter(
-            id=chat_id
-        ).prefetch_related(
-            Prefetch(
-                'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    'userchatparticipantmessage_set',
-                ).select_related(
-                    'user',
-                )
-            )
-        ).first()
-
+        chat = UserManagementService.get_chat(request, pk, chat_id)
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 

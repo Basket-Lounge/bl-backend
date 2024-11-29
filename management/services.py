@@ -7,8 +7,9 @@ from management.serializers import InquiryModeratorMessageSerializer, InquiryMod
 from django.db.models import Prefetch, Q
 from django.db.models.manager import BaseManager
 
-from teams.models import Post, PostComment
-from users.models import UserChat
+from teams.models import Post, PostComment, PostCommentLike, PostCommentReply, PostLike, PostStatusDisplayName
+from users.models import UserChat, UserChatParticipant
+from users.services import create_user_queryset_without_prefetch
 
 
 post_queryset_allowed_order_by_fields = (
@@ -280,14 +281,14 @@ def send_new_moderator_to_live_chat(
     inquiry_serializer_data['moderators'] = inquiry_moderator_serializer.data
 
     data = {
-        'type': 'new_moderator',
         'inquiry': inquiry_serializer_data
     }
 
     inquiry_channel_name = f'users/inquiries/{inquiry.id}'
     resp_json = send_message_to_centrifuge(
         inquiry_channel_name,
-        data
+        data,
+        type='new_moderator'
     )
     if resp_json.get('error', None):
         print(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
@@ -353,14 +354,14 @@ def send_unassigned_inquiry_to_live_chat(
     inquiry_serializer_data['moderators'] = inquiry_moderator_serializer.data
 
     data = {
-        'type': 'unassign_moderator',
         'inquiry': inquiry_serializer_data
     }
 
     inquiry_channel_name = f'users/inquiries/{inquiry.id}'
     resp_json = send_message_to_centrifuge(
         inquiry_channel_name,
-        data
+        data,
+        type='unassign_moderator'
     )
     if resp_json.get('error', None):
         print(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
@@ -391,14 +392,14 @@ def send_partially_updated_inquiry_to_live_chat(
     )
 
     data = {
-        'type': 'inquiry_state_update',
         'inquiry': inquiry_serializer.data
     }
 
     inquiry_channel_name = f'users/inquiries/{inquiry.id}'
     resp_json = send_message_to_centrifuge(
         inquiry_channel_name,
-        data
+        data,
+        type='inquiry_state_update'
     )
     if resp_json.get('error', None):
         print(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
@@ -552,7 +553,7 @@ def serialize_report(report: Report) -> ReportSerializer:
         }
     )
 
-def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(**kwargs) -> BaseManager[Inquiry]:
+def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(request, **kwargs) -> BaseManager[Inquiry]:
     queryset = Inquiry.objects.select_related(
         'inquiry_type',
         'user'
@@ -565,7 +566,7 @@ def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(**kwargs) -> Ba
         ),
         Prefetch(
             'messages',
-            queryset=InquiryMessage.objects.order_by('created_at')
+            queryset=InquiryMessage.objects.order_by('-created_at')
         ),
         Prefetch(
             'inquirymoderator_set',
@@ -574,11 +575,18 @@ def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(**kwargs) -> Ba
             ).prefetch_related(
                 Prefetch(
                     'inquirymoderatormessage_set',
-                    queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    queryset=InquiryModeratorMessage.objects.order_by('-created_at')
                 )
             )
         )
     ).order_by('-updated_at')
+
+    search_term = request.query_params.get('search', None)
+    if search_term is not None:
+        queryset = queryset.filter(
+            Q(user__username__icontains=search_term) | Q(user__email__icontains=search_term) |
+            Q(title__icontains=search_term)
+        )
 
     if kwargs:
         return queryset.filter(**kwargs)
@@ -599,7 +607,7 @@ def filter_and_fetch_inquiry(**kwargs) -> Inquiry:
         ),
         Prefetch(
             'messages',
-            queryset=InquiryMessage.objects.order_by('created_at')
+            queryset=InquiryMessage.objects.order_by('-created_at')
         ),
         Prefetch(
             'inquirymoderator_set',
@@ -608,7 +616,7 @@ def filter_and_fetch_inquiry(**kwargs) -> Inquiry:
             ).prefetch_related(
                 Prefetch(
                     'inquirymoderatormessage_set',
-                    queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                    queryset=InquiryModeratorMessage.objects.order_by('-created_at')
                 )
             )
         )
@@ -771,3 +779,118 @@ def create_userchat_queryset_without_prefetch(
         return queryset.only(*fields_only)
 
     return queryset
+
+class UserManagementService:
+    @staticmethod
+    def get_user_list(request):
+        return create_user_queryset_without_prefetch(
+            request, 
+            fields_only=[
+                'id', 
+                'username', 
+                'email',
+                'role__id',
+                'role__name',
+                'role__description',
+                'role__weight'
+            ]
+        ).select_related('role')
+
+    @staticmethod
+    def get_user_chats(request, pk):
+        return create_userchat_queryset_without_prefetch(
+            request,
+            fields_only=[],
+            userchatparticipant__user__id=pk 
+        ).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.prefetch_related(
+                    'userchatparticipantmessage_set',
+                ).select_related(
+                    'user',
+                )
+            )
+        )
+
+    @staticmethod 
+    def get_chat(request, pk, chat_id):
+        return UserChat.objects.filter(
+            userchatparticipant__user__id=pk
+        ).filter(
+            id=chat_id
+        ).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.prefetch_related(
+                    'userchatparticipantmessage_set',
+                ).select_related(
+                    'user',
+                )
+            )
+        ).first()
+    
+    @staticmethod
+    def get_user_posts(request, pk):
+        return create_post_queryset_without_prefetch(
+            request,
+            fields_only=[
+                'id',
+                'title',
+                'created_at', 
+                'updated_at', 
+                'user__id', 
+                'user__username', 
+                'team__id', 
+                'team__symbol', 
+                'status__id', 
+                'status__name'
+            ],
+            user__id=pk
+        ).prefetch_related(
+            'postlike_set',
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        )
+    
+    @staticmethod
+    def get_user_comments(request, pk):
+        return create_post_comment_queryset_without_prefetch(
+            request, 
+            fields_only=[
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name',
+                'post__id',
+                'post__title',
+                'post__team__id',
+                'post__team__symbol',
+                'post__user__id',
+                'post__user__username'
+            ],
+            user__id=pk
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.all()
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.all()
+            ),
+        ).select_related(
+            'user',
+            'status',
+            'post__team',
+            'post__user'
+        )
