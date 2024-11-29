@@ -64,7 +64,11 @@ def update_game_score():
 
 def fix_game_score():
     gameDates = [
+        '2024-11-01',
+        '2024-11-02',
+        '2024-11-03',
         '2024-11-09',
+        '2024-11-10',
     ]
 
     for gameDate in gameDates:
@@ -84,6 +88,13 @@ def fix_game_score():
                 boxscore = BoxScore(game_id=game['GAME_ID']).get_dict()['game']
                 print("Updating game: ", game['GAME_ID'])
                 game_obj = Game.objects.get(game_id=game['GAME_ID'])
+
+                game_obj.game_status_id = boxscore['gameStatus']
+                game_obj.game_status_text = boxscore['gameStatusText']
+                game_obj.live_period = boxscore['period']
+                game_obj.live_pc_time = boxscore['gameClock']
+
+                game_obj.save()
 
                 hometeam_linescore = boxscore['homeTeam']['periods']
                 hometeam_players = boxscore['homeTeam']['players']

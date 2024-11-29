@@ -332,13 +332,14 @@ def create_game_queryset_without_prefetch(
 
     if date_start_filter is not None and date_end_filter is not None:
         try:
-            date_start = datetime.fromisoformat(date_start_filter) - timedelta(days=1)
-            date_end = datetime.fromisoformat(date_end_filter) + timedelta(days=1)
+            if date_start_filter == date_end_filter:
+                date_start_filter = datetime.fromisoformat(date_start_filter) - timedelta(days=1)
+                date_end_filter = datetime.fromisoformat(date_end_filter) + timedelta(days=1)
 
             queryset = queryset.filter(
                 game_date_est__range=[
-                    date_start, 
-                    date_end
+                    date_start_filter,
+                    date_end_filter
                 ]
             )
         except ValueError:
