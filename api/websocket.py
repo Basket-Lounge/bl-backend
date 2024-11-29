@@ -5,8 +5,9 @@ from django.conf import settings
 
 api_key = settings.CENTRIFUGO_API_KEY
 
-def send_message_to_centrifuge(channel: str, message: dict):
+def send_message_to_centrifuge(channel: str, message: dict, type: str = "message"):
     print("Sending a message to channel", channel)
+    message['type'] = type
     data = json.dumps({
         "channel": channel,
         "data": message
