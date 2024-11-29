@@ -2,7 +2,7 @@ from datetime import timedelta, datetime
 import re
 
 from django.conf import settings
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Count, Exists, OuterRef
 
 from nba_api.stats.endpoints.franchisehistory import FranchiseHistory
 from nba_api.stats.endpoints.leaguestandingsv3 import LeagueStandingsV3
@@ -15,8 +15,10 @@ import pytz
 from games.models import Game, LineScore
 from games.serializers import GameSerializer, LineScoreSerializer, PlayerCareerStatisticsSerializer
 from players.models import Player, PlayerCareerStatistics, PlayerStatistics
-from teams.models import Team, TeamName
+from players.serializers import PlayerSerializer
+from teams.models import Post, PostComment, PostCommentLike, PostCommentReply, PostLike, PostStatusDisplayName, Team, TeamName
 from teams.utils import calculate_time, create_empty_player_season_stats
+from users.services import create_post_queryset_without_prefetch_for_user
 
 
 def get_all_teams_season_stats(year):
@@ -338,22 +340,34 @@ def get_player_career_stats(player_id):
     return career_stats
 
 def get_player_current_season_stats(player_id, team_id):
-    current_season = settings.SEASON_YEAR 
+    player = Player.objects.filter(id=player_id).prefetch_related(
+        'playerstatistics_set'
+    ).first()
 
-    career_stats = PlayerCareerStatistics.objects.select_related('player', 'team').filter(
-        player__id=player_id,
-        season_id=current_season
-    )
-
-    if not career_stats.exists():
-        return create_empty_player_season_stats()
-
-    serializer = PlayerCareerStatisticsSerializer(
-        career_stats.first(),
-        fields_exclude=['player', 'team', 'team_data'],
-    )
+    if not player:
+        raise ValueError('Invalid player_id')
     
-    return serializer.data
+    serializer = PlayerSerializer(
+        player,
+        fields=['season_stats'],
+    )
+
+    return serializer.data['season_stats']
+
+    # career_stats = PlayerCareerStatistics.objects.select_related('player', 'team').filter(
+    #     player__id=player_id,
+    #     season_id=current_season
+    # )
+
+    # if not career_stats.exists():
+    #     return create_empty_player_season_stats()
+
+    # serializer = PlayerCareerStatisticsSerializer(
+    #     career_stats.first(),
+    #     fields_exclude=['player', 'team', 'team_data'],
+    # )
+    
+    # return serializer.data
 
 def get_team_players(team_id):
     try:
@@ -449,3 +463,241 @@ def register_games_for_the_current_season():
             print(f"Game {game_instance.game_id} created")
 
         current_date += timedelta(days=1)
+
+class TeamViewService:
+    @staticmethod
+    def get_10_popular_posts(request):
+        posts = Post.objects.annotate(
+            likes_count=Count('postlike'),
+        ).order_by(
+            '-likes_count'
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postlike_set',
+                queryset=PostLike.objects.all()
+            ),
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                ).all()
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        )
+        # ).filter(
+        #     created_at__gte=datetime.now() - timedelta(hours=24)
+        # )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts[:10]
+    
+    @staticmethod
+    def get_team_10_popular_posts(request, pk):
+        posts = Post.objects.annotate(
+            likes_count=Count('postlike'),
+        ).filter(
+            team__id=pk
+        ).order_by(
+            '-likes_count'
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            'postlike_set',
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        )
+        # ).filter(
+        #     created_at__gte=datetime.now() - timedelta(hours=24)
+        # )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts[:10]
+    
+    @staticmethod
+    def get_team_posts(request, pk):
+        posts = create_post_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id', 
+                'title', 
+                'created_at', 
+                'updated_at', 
+                'user__id', 
+                'user__username', 
+                'team__id', 
+                'team__symbol', 
+                'status__id', 
+                'status__name'
+            ],
+            team__id=pk
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            'postlike_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts
+
+    @staticmethod
+    def get_post(request, pk, post_id):
+        post = Post.objects.select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            'postlike_set',
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            )
+        ).only(
+            'id', 
+            'title', 
+            'content', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id',
+            'status__name'
+        ).filter(
+            team__id=pk,
+            id=post_id
+        )
+
+        if request.user.is_authenticated:
+            post = post.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return post.first()
+
+    @staticmethod
+    def get_comments(request, pk, post_id):
+        query = PostComment.objects.filter(
+            post__team__id=pk,
+            post__id=post_id
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.only('id')
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.only('id')
+            ),
+        ).select_related(
+            'user',
+            'status'
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name'
+        ).order_by('-created_at')
+
+        if request.user.is_authenticated:
+            query = query.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+
+        return query
+    
+    @staticmethod
+    def get_comment(request, pk, post_id, comment_id):
+        comment = PostComment.objects.select_related(
+            'user',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.only('id')
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.only('id')
+            ),
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name'
+        ).filter(
+            post__team__id=pk,
+            post__id=post_id,
+            id=comment_id
+        )
+
+        if request.user.is_authenticated:
+            comment = comment.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+            
+        return comment.first()

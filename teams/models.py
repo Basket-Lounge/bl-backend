@@ -27,7 +27,8 @@ class TeamName(models.Model):
     
     class Meta:
         unique_together = ['team', 'language']
-    
+
+
 class TeamLike(models.Model):
     id = models.UUIDField(
         primary_key=True, 
@@ -36,12 +37,20 @@ class TeamLike(models.Model):
     )
     team = models.ForeignKey(Team, on_delete=models.CASCADE)
     user = models.ForeignKey('users.User', on_delete=models.CASCADE)
+    favorite = models.BooleanField(default=False)
 
     def __str__(self):
         return f'{self.id}'
     
     class Meta:
         unique_together = ['team', 'user']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'], 
+                condition=models.Q(favorite=True),
+                name='unique_team_like'
+            )
+        ]
 
 
 class PostStatus(models.Model):

@@ -32,6 +32,7 @@ from teams.models import (
 )
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.services import (
+    TeamViewService,
     get_all_games_for_team_this_season,
     get_all_teams_season_stats, 
     get_last_n_games_log,
@@ -156,7 +157,7 @@ class TeamViewSet(viewsets.ViewSet):
         return Response(team_franchise_history)
 
     ## Cache the standings for 10 minutes
-    @method_decorator(cache_page(60*10)) 
+    @method_decorator(cache_page(60*60*24)) 
     @action(detail=False, methods=['get'], url_path='standings')
     def get_standings(self, request):
         relevant_keys = [
@@ -192,6 +193,7 @@ class TeamViewSet(viewsets.ViewSet):
         players = get_team_players(pk)
         serializer = PlayerSerializer(
             players,
+            fields_exclude=['season_stats'],
             many=True,
             context={
                 'team': {
@@ -236,7 +238,7 @@ class TeamViewSet(viewsets.ViewSet):
 
         return Response(status=HTTP_404_NOT_FOUND)
     
-    # @method_decorator(cache_page(60*10))
+    @method_decorator(cache_page(60*60*24))
     @action(detail=True, methods=['get'], url_path=r'players/(?P<player_id>[^/.]+)/season-stats')
     def get_specific_player_season_stats(self, request, pk=None, player_id=None):
         players = get_team_players(pk)
@@ -410,44 +412,14 @@ class TeamViewSet(viewsets.ViewSet):
     @post_team_post.mapping.get
     def get_team_posts(self, request, pk=None):
         try:
-            team = Team.objects.get(id=pk)
+            Team.objects.get(id=pk)
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        fields_exclude = ['content']
-        posts = Post.objects.filter(team=team).order_by('-created_at').select_related(
-            'user',
-            'team',
-            'status'
-        ).prefetch_related(
-            Prefetch(
-                'postlike_set',
-                queryset=PostLike.objects.filter(post__team=team)
-            ),
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                ).all()
-            ),
-        ).only(
-            'id', 
-            'title', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id', 
-            'status__name'
-        )
+        posts = TeamViewService.get_team_posts(request, pk)
 
-        if request.user.is_authenticated:
-            posts = posts.annotate(
-                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
-        else:
+        fields_exclude = ['content']
+        if not request.user.is_authenticated:
             fields_exclude.append('liked')
 
         pagination = CustomPageNumberPagination()
@@ -482,47 +454,51 @@ class TeamViewSet(viewsets.ViewSet):
     )
     def get_popular_posts(self, request, pk=None):
         fields_exclude = ['content']
-        posts = Post.objects.annotate(
-            likes_count=Count('postlike'),
-        ).order_by(
-            '-likes_count'
-        ).select_related(
-            'user',
-            'team',
-            'status'
-        ).prefetch_related(
-            Prefetch(
-                'postlike_set',
-                queryset=PostLike.objects.all()
-            ),
-            'postcomment_set',
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                ).all()
-            ),
-        ).only(
-            'id', 
-            'title', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id', 
-            'status__name'
-        )[:10]
-        # ).filter(
-        #     created_at__gte=datetime.now() - timedelta(hours=24)
-        # )
+        posts = TeamViewService.get_10_popular_posts(request)
 
-        if request.user.is_authenticated:
-            posts = posts.annotate(
-                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
-        else:
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
+
+        pagination = CustomPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(posts, request)
+
+        serializer = PostSerializer(
+            paginated_data,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'posts/popular'
+    )
+    def get_team_popular_posts(self, request, pk=None):
+        try:
+            team = Team.objects.get(id=pk)
+        except Team.DoesNotExist:
+            return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
+        
+        posts = TeamViewService.get_team_10_popular_posts(request, team)
+
+        fields_exclude = ['content']
+        if not request.user.is_authenticated:
             fields_exclude.append('liked')
 
         pagination = CustomPageNumberPagination()
@@ -556,62 +532,18 @@ class TeamViewSet(viewsets.ViewSet):
         url_path=r'posts/(?P<post_id>[^/.]+)'
     )
     def get_team_post(self, request, pk=None, post_id=None):
-        user = request.user
         try:
-            team = Team.objects.get(id=pk)
+            Team.objects.get(id=pk)
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
 
-        try:
-            post = Post.objects.select_related(
-                'user',
-                'team',
-                'status'
-            ).prefetch_related(
-                Prefetch(
-                    'postlike_set',
-                    queryset=PostLike.objects.filter(post__team=team).only('id')
-                ),
-                Prefetch(
-                    'postcomment_set',
-                    queryset=PostComment.objects.filter(post__team=team).only('id')
-                ),
-                Prefetch(
-                    'status__poststatusdisplayname_set',
-                    queryset=PostStatusDisplayName.objects.select_related(
-                        'language'
-                    ).all()
-                )
-            ).only(
-                'id', 
-                'title', 
-                'content', 
-                'created_at', 
-                'updated_at', 
-                'user__id', 
-                'user__username', 
-                'team__id', 
-                'team__symbol', 
-                'status__id',
-                'status__name'
-            )
-
-            fields_exclude = []
-            if user.is_authenticated:
-                post = post.annotate(
-                    liked=Exists(PostLike.objects.filter(user=user, post=OuterRef('pk')))
-                ).get(
-                    team=team,
-                    id=post_id
-                )
-            else:
-                fields_exclude.append('liked')
-                post = post.get(
-                    team=team,
-                    id=post_id
-                )
-        except Post.DoesNotExist:
+        post = TeamViewService.get_post(request, pk, post_id)
+        if not post:
             return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
+
+        fields_exclude = []
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
 
         serializer = PostSerializer(
             post,
@@ -744,47 +676,18 @@ class TeamViewSet(viewsets.ViewSet):
     )
     def get_comments(self, request, pk=None, post_id=None):
         try:
-            team = Team.objects.get(id=pk)
+            Team.objects.get(id=pk)
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        query = PostComment.objects.filter(
-            post__team=team, 
-            post__id=post_id
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.filter(post_comment__post__id=post_id).only('id')
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.filter(post_comment__post__id=post_id).only('id')
-            ),
-        ).select_related(
-            'user',
-            'status'
-        ).only(
-            'id',
-            'content',
-            'created_at',
-            'updated_at',
-            'user__id',
-            'user__username',
-            'status__id',
-            'status__name'
-        ).order_by('-created_at')
+        comments = TeamViewService.get_comments(request, pk, post_id)
 
         fields_exclude = ['post_data']
-
-        if request.user.is_authenticated:
-            query = query.annotate(
-                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
-            )
-        else:
+        if not request.user.is_authenticated:
             fields_exclude.append('liked')
 
         pagination = CustomPageNumberPagination()
-        paginated_data = pagination.paginate_queryset(query, request)
+        paginated_data = pagination.paginate_queryset(comments, request)
 
         serializer = PostCommentSerializer(
             paginated_data,
@@ -844,44 +747,13 @@ class TeamViewSet(viewsets.ViewSet):
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        try:
-            fields_exclude = ['post_data']
-
-            comment = PostComment.objects.select_related(
-                'user',
-                'status'
-            ).prefetch_related(
-                Prefetch(
-                    'postcommentlike_set',
-                    queryset=PostCommentLike.objects.filter(post_comment__post__id=post_id).only('id')
-                ),
-                Prefetch(
-                    'postcommentreply_set',
-                    queryset=PostCommentReply.objects.filter(post_comment__post__id=post_id).only('id')
-                ),
-            ).only(
-                'id',
-                'content',
-                'created_at',
-                'updated_at',
-                'user__id',
-                'user__username',
-                'status__id',
-                'status__name'
-            )
-
-            if request.user.is_authenticated:
-                comment = comment.annotate(
-                    liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
-                ).get(
-                    post__team=team,
-                    post__id=post_id,
-                    id=comment_id
-                )
-            else:
-                fields_exclude.append('liked')
-        except PostComment.DoesNotExist:
+        comment = TeamViewService.get_comment(request, team, post_id, comment_id)
+        if not comment:
             return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+
+        fields_exclude = ['post_data']
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
 
         serializer = PostCommentSerializer(
             comment,
