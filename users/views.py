@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
-from django.db.models import Exists, OuterRef, Prefetch, Q
+from django.db.models import Exists, OuterRef, Prefetch
 
 from rest_framework.decorators import action
 from rest_framework.viewsets import ViewSet
@@ -33,10 +33,8 @@ from management.serializers import (
     InquirySerializer, 
 )
 from teams.models import (
-    Post, 
     PostComment, 
     PostCommentLike, 
-    PostCommentReply, 
     PostLike, 
     PostStatusDisplayName, 
     Team, 
@@ -53,7 +51,8 @@ from users.serializers import (
     UserChatParticipantMessageCreateSerializer,
     UserChatParticipantMessageSerializer,
     UserChatSerializer, 
-    UserSerializer
+    UserSerializer,
+    UserUpdateSerializer
 )
 
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
@@ -61,6 +60,7 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 from dj_rest_auth.registration.views import SocialLoginView
 
+from users.services import create_comment_queryset_without_prefetch_for_user, create_post_queryset_without_prefetch_for_user, create_userchat_queryset_without_prefetch_for_user
 from users.utils import (
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
@@ -103,6 +103,8 @@ class UserViewSet(ViewSet):
             permission_classes = [IsAuthenticated]
         elif self.action == 'delete_favorite_team':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'me':
+            permission_classes = [IsAuthenticated]
 
         return [permission() for permission in permission_classes]
     
@@ -120,11 +122,62 @@ class UserViewSet(ViewSet):
                 'introduction', 
                 'is_profile_visible',
                 'chat_blocked',
-                'likes_count'
+                'likes_count',
+                'favorite_team',
             ),
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+            }
         )
 
         return Response(serializer.data)
+    
+    @me.mapping.patch
+    def patch_me(self, request):
+        user = request.user
+
+        serializer = UserUpdateSerializer(
+            user, 
+            data=request.data,
+            partial=True
+        )         
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        user = User.objects.filter(id=user.id).select_related(
+            'role'
+        ).prefetch_related(
+            Prefetch(
+                'liked_user',
+                queryset=UserLike.objects.all()
+            ),
+            Prefetch(
+                'teamlike_set',
+                queryset=TeamLike.objects.select_related('team').all()
+            )
+        ).first()
+
+        serializer = UserSerializer(
+            user,
+            fields=[
+                'id',
+                'username',
+                'email',
+                'role_data',
+                'introduction',
+                'level',
+                'created_at',
+                'is_profile_visible',
+                'chat_blocked',
+                'likes_count',
+                'teamlike_set'
+            ]
+        )
+
+        return Response(serializer.data)
+
 
     def retrieve(self, request, pk=None):
         fields = [
@@ -135,14 +188,19 @@ class UserViewSet(ViewSet):
             'introduction',
             'is_profile_visible',
             'chat_blocked',
-            'likes_count'
+            'likes_count',
+            'favorite_team',
         ]
 
         try:
             user = User.objects.select_related('role').only(
                 'username', 'role', 'experience', 'introduction', 'is_profile_visible', 'id', 'chat_blocked'
             ).prefetch_related(
-                'liked_user'
+                'liked_user',
+                Prefetch(
+                    'teamlike_set',
+                    queryset=TeamLike.objects.select_related('team')
+                )
             )
 
             if request.user.is_authenticated:
@@ -160,6 +218,11 @@ class UserViewSet(ViewSet):
         serializer = UserSerializer(
             user,
             fields=fields,
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+            }
         )
 
         return Response(serializer.data)
@@ -199,6 +262,13 @@ class UserViewSet(ViewSet):
             }
         )
 
+        favorite_team = TeamLike.objects.filter(user=user, favorite=True).first()
+        if favorite_team:
+            for team in serializer.data:
+                if team['id'] == favorite_team.team.id:
+                    team['favorite'] = True
+                    break
+
         return Response(serializer.data)
     
     @action(
@@ -233,6 +303,13 @@ class UserViewSet(ViewSet):
             }
         )
 
+        favorite_team = TeamLike.objects.filter(user=user, favorite=True).first()
+        if favorite_team:
+            for team in serializer.data:
+                if team['id'] == favorite_team.team.id:
+                    team['favorite'] = True
+                    break
+
         return Response(serializer.data)
 
     @get_favorite_teams.mapping.put
@@ -240,12 +317,24 @@ class UserViewSet(ViewSet):
         user = request.user
         data = request.data
 
+        count_favorite_teams = 0
+        favorite_team_id = None
+        for team in data:
+            if 'favorite' in team and team['favorite']:
+                count_favorite_teams += 1
+                favorite_team_id = team['id']
+            
+            if count_favorite_teams > 1:
+                return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'Only one favorite team allowed'})
+            
+
         team_ids = [team['id'] for team in data]
         teams = Team.objects.filter(id__in=team_ids)
 
         TeamLike.objects.filter(user=user).delete()
         TeamLike.objects.bulk_create([
-            TeamLike(user=user, team=team) for team in teams
+            TeamLike(user=user, team=team) if favorite_team_id != team.id else TeamLike(user=user, team=team, favorite=True)
+            for team in teams
         ])
 
         return Response(status=HTTP_201_CREATED)
@@ -346,10 +435,22 @@ class UserViewSet(ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
 
         fields_exclude = ['content']
-        posts = Post.objects.filter(user=user).order_by('-created_at').select_related(
-            'user',
-            'team',
-            'status'
+        posts = create_post_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id', 
+                'title', 
+                'created_at', 
+                'updated_at', 
+                'user__id', 
+                'user__username', 
+                'team__id', 
+                'team__symbol', 
+                'status__id', 
+                'status__name'
+            ],
+            user=user,
+            status__name='created'
         ).prefetch_related(
             Prefetch(
                 'postlike_set',
@@ -363,19 +464,8 @@ class UserViewSet(ViewSet):
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
                     'language'
-                ).all()
+                )
             ),
-        ).only(
-            'id', 
-            'title', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id', 
-            'status__name'
         )
 
         if request.user.is_authenticated:
@@ -384,6 +474,7 @@ class UserViewSet(ViewSet):
             )
         else:
             fields_exclude.append('liked')
+
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
@@ -420,10 +511,23 @@ class UserViewSet(ViewSet):
         user = request.user
 
         fields_exclude = ['content']
-        posts = Post.objects.filter(user=user).order_by('-created_at').select_related(
-            'user',
-            'team',
-            'status'
+        posts = create_post_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id', 
+                'title', 
+                'created_at', 
+                'updated_at', 
+                'user__id', 
+                'user__username', 
+                'team__id', 
+                'team__symbol', 
+                'status__id', 
+                'status__name'
+            ],
+            user=user
+        ).annotate(
+            liked=Exists(PostLike.objects.filter(user=user, post=OuterRef('pk')))
         ).prefetch_related(
             Prefetch(
                 'postlike_set',
@@ -439,19 +543,6 @@ class UserViewSet(ViewSet):
                     'language'
                 ).all()
             ),
-        ).only(
-            'id', 
-            'title', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id', 
-            'status__name'
-        ).annotate(
-            liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
         )
 
         pagination = CustomPageNumberPagination()
@@ -502,41 +593,33 @@ class UserViewSet(ViewSet):
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        query = PostComment.objects.filter(
-            user=user,
-        ).exclude(
-            Q(status__name='deleted') | Q(post__status__name='deleted')
+        query = create_comment_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name',
+                'post__id',
+                'post__title',
+                'post__team__id',
+                'post__team__symbol',
+                'post__user__id',
+                'post__user__username'
+            ],
+            user=user
         ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.filter(post_comment__user=user)
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.filter(post_comment__user=user)
-            ),
+            'postcommentlike_set',
+            'postcommentreply_set',
         ).select_related(
             'user',
             'status',
             'post__team',
             'post__user'
-        ).only(
-            'id',
-            'content',
-            'created_at',
-            'updated_at',
-            'user__id',
-            'user__username',
-            'status__id',
-            'status__name',
-            'post__id',
-            'post__title',
-            'post__team__id',
-            'post__team__symbol',
-            'post__user__id',
-            'post__user__username'
-        ).order_by(
-            '-created_at'
         )
 
         if request.user.is_authenticated:
@@ -578,41 +661,33 @@ class UserViewSet(ViewSet):
     def get_comments(self, request):
         user = request.user
 
-        query = PostComment.objects.filter(
-            user=user,
-        ).exclude(
-            Q(status__name='deleted') | Q(post__status__name='deleted')
+        query = create_comment_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name',
+                'post__id',
+                'post__title',
+                'post__team__id',
+                'post__team__symbol',
+                'post__user__id',
+                'post__user__username'
+            ],
+            user=user
         ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.filter(post_comment__user=user)
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.filter(post_comment__user=user)
-            ),
+            'postcommentlike_set',
+            'postcommentreply_set',
         ).select_related(
             'user',
             'status',
             'post__team',
             'post__user'
-        ).only(
-            'id',
-            'content',
-            'created_at',
-            'updated_at',
-            'user__id',
-            'user__username',
-            'status__id',
-            'status__name',
-            'post__id',
-            'post__title',
-            'post__team__id',
-            'post__team__symbol',
-            'post__user__id',
-            'post__user__username'
-        ).order_by(
-            '-created_at'
         ).annotate(
             liked=Exists(PostCommentLike.objects.filter(user=user, post_comment=OuterRef('pk')))
         )
@@ -650,36 +725,28 @@ class UserViewSet(ViewSet):
     def get_chats(self, request):
         user = request.user
 
-        user_chat_query = UserChat.objects.filter(
-            userchatparticipant__user=user,
-            userchatparticipant__chat_blocked=False,
-            userchatparticipant__chat_deleted=False
-        )
-        
-        chat_query = UserChat.objects.filter(
+        chats = create_userchat_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[],
             userchatparticipant__user=user,
             userchatparticipant__chat_blocked=False,
             userchatparticipant__chat_deleted=False
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.filter(
-                    chat__in=user_chat_query
-                ).prefetch_related(
+                UserChatParticipant.objects.prefetch_related(
                     Prefetch(
                         'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.filter(
-                            sender__chat__in=user_chat_query
-                        ).order_by('created_at')
+                        queryset=UserChatParticipantMessage.objects.order_by('created_at')
                     ),
                 ).select_related(
                     'user',
                 )
             )
-        ).order_by('-updated_at')
+        )
 
         pagination = CustomPageNumberPagination()
-        paginated_data = pagination.paginate_queryset(chat_query, request)
+        paginated_data = pagination.paginate_queryset(chats, request)
 
         serializer = UserChatSerializer(
             paginated_data,
@@ -801,6 +868,7 @@ class UserViewSet(ViewSet):
             sender=participants.get(user=user),
             receiver=participants.get(user__id=user_id)
         )
+        chat.updated_at = datetime.now(timezone.utc)
         chat.save()
 
         message_serializer = UserChatParticipantMessageSerializer(
@@ -1151,7 +1219,7 @@ class UserViewSet(ViewSet):
             ),
             Prefetch(
                 'messages',
-                queryset=InquiryMessage.objects.order_by('created_at')
+                queryset=InquiryMessage.objects.order_by('-created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
@@ -1160,7 +1228,7 @@ class UserViewSet(ViewSet):
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
                     )
                 )
             )
@@ -1237,7 +1305,7 @@ class UserViewSet(ViewSet):
             ),
             Prefetch(
                 'messages',
-                queryset=InquiryMessage.objects.order_by('created_at')
+                queryset=InquiryMessage.objects.order_by('-created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
@@ -1246,7 +1314,7 @@ class UserViewSet(ViewSet):
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
                     )
                 )
             )
@@ -1348,7 +1416,7 @@ class UserViewSet(ViewSet):
             ),
             Prefetch(
                 'messages',
-                queryset=InquiryMessage.objects.order_by('created_at')
+                queryset=InquiryMessage.objects.order_by('-created_at')
             ),
             Prefetch(
                 'inquirymoderator_set',
@@ -1357,11 +1425,12 @@ class UserViewSet(ViewSet):
                 ).prefetch_related(
                     Prefetch(
                         'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('created_at')
+                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
                     )
                 )
             )
         ).first()
+        inquiry.updated_at = datetime.now(timezone.utc)
         inquiry.save()
 
         serializer = InquirySerializer(
@@ -1531,6 +1600,41 @@ class JWTViewSet(ViewSet):
             domain=domain,
             samesite=samesite,
             max_age=settings.SIMPLE_JWT.get('ACCESS_TOKEN_LIFETIME')
+        )
+
+        return response
+    
+    @refresh.mapping.delete
+    def delete_refresh(self, request):
+        refresh_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_REFRESH_TOKEN_COOKIE', 'refresh')
+        access_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_ACCESS_TOKEN_COOKIE', 'access')
+        secure = settings.SIMPLE_JWT.get('AUTH_COOKIE_SECURE', True)
+        httpOnly = settings.SIMPLE_JWT.get('AUTH_COOKIE_HTTP_ONLY', True)
+        path = settings.SIMPLE_JWT.get('AUTH_COOKIE_PATH', '/')
+        domain = settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN', None)
+        samesite = settings.SIMPLE_JWT.get('AUTH_COOKIE_SAMESITE', 'Lax')
+
+        response = Response(status=HTTP_200_OK)
+        response.set_cookie(
+            refresh_token_cookie_key,
+            '',
+            secure=secure,
+            httponly=httpOnly,
+            path=path,
+            domain=domain,
+            samesite=samesite,
+            expires=0
+        )
+
+        response.set_cookie(
+            access_token_cookie_key,
+            '',
+            secure=secure,
+            httponly=httpOnly,
+            path=path,
+            domain=domain,
+            samesite=samesite,
+            max_age=0
         )
 
         return response

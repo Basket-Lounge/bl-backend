@@ -92,8 +92,9 @@ class CustomSocialLoginSerializer(SocialLoginSerializer):
         social_token.app = app
 
         ## Delay for 2 seconds to prevent rate limit
-        import time
-        time.sleep(2)
+        # import time
+        # time.sleep(2)
+
         try:
             login = self.get_social_login(adapter, app, social_token, token)
             complete_social_login(request, login)
@@ -134,6 +135,7 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     level = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField()
     liked = serializers.SerializerMethodField()
+    favorite_team = serializers.SerializerMethodField()
 
     class Meta:
         model = get_user_model()
@@ -179,12 +181,27 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     def get_liked(self, obj):
         return obj.liked
     
+    def get_favorite_team(self, obj):
+        if not hasattr(obj, 'teamlike_set'):
+            return None
+        
+        for teamlike in obj.teamlike_set.all():
+            if teamlike.favorite:
+                context = self.context.get('team', {})
+                serializer = TeamSerializer(
+                    teamlike.team, 
+                    context=self.context,
+                    **context    
+                )
+                return serializer.data
+            
+        return None
+    
 
 class UserUpdateSerializer(serializers.Serializer):
     introduction = serializers.CharField(min_length=1)
     is_profile_visible = serializers.BooleanField()
     chat_blocked = serializers.BooleanField()
-    role = serializers.IntegerField()
     username = serializers.CharField(min_length=1, max_length=128)
 
     def update(self, instance, validated_data):
@@ -219,14 +236,6 @@ class UserUpdateSerializer(serializers.Serializer):
 
             instance.username = username
 
-        if role:
-            role_obj = Role.objects.filter(id=role).first()
-            if role_obj:
-                if role_obj.weight <= 2:
-                    raise serializers.ValidationError('Cannot assign admin role to user')
-
-                instance.role = role_obj
-            
         instance.save()
         return instance
 
