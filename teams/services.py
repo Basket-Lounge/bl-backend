@@ -1,25 +1,41 @@
 from datetime import timedelta, datetime
 import re
+from typing import List
 
 from django.conf import settings
 from django.db.models import Q, Prefetch, Count, Exists, OuterRef
 
 from nba_api.stats.endpoints.franchisehistory import FranchiseHistory
 from nba_api.stats.endpoints.leaguestandingsv3 import LeagueStandingsV3
-from nba_api.stats.endpoints.playercareerstats import PlayerCareerStats
-from nba_api.stats.endpoints.playerindex import PlayerIndex
 from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
-from nba_api.stats.endpoints.playergamelogs import PlayerGameLogs
 import pytz
 
 from games.models import Game, LineScore
-from games.serializers import GameSerializer, LineScoreSerializer, PlayerCareerStatisticsSerializer
+from games.serializers import GameSerializer, LineScoreSerializer
 from players.models import Player, PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
-from teams.models import Post, PostComment, PostCommentLike, PostCommentReply, PostLike, PostStatusDisplayName, Team, TeamName
-from teams.utils import calculate_time, create_empty_player_season_stats
+from teams.models import (
+    Post, 
+    PostComment, 
+    PostCommentLike, 
+    PostCommentReply, 
+    PostLike, 
+    PostStatusDisplayName, 
+    Team, 
+    TeamName
+)
+from teams.utils import calculate_time
 from users.services import create_post_queryset_without_prefetch_for_user
 
+
+comment_queryset_allowed_order_by_fields = [
+    'created_at',
+    '-created_at',
+    'postcommentlike',
+    '-postcommentlike',
+    'postcommentreply',
+    '-postcommentreply',
+]
 
 def get_all_teams_season_stats(year):
     ## Use Regex to get the year from the season
@@ -464,6 +480,84 @@ def register_games_for_the_current_season():
 
         current_date += timedelta(days=1)
 
+def create_comment_queryset_without_prefetch_for_post(
+    request,
+    fields_only=[],
+    **kwargs
+):
+    """
+    Create a queryset for the PostComment model without prefetching related models.\n
+    - request: request object.\n
+    - fields_only: list of fields to return in the queryset.\n
+    - **kwargs: keyword arguments to filter
+    """
+
+    if kwargs is not None:
+        queryset = PostComment.objects.filter(**kwargs)
+    else:
+        queryset = PostComment.objects.all()
+
+    sort_by_likes_count, sort_by_likes_count_direction = False, True
+    sort_by_replies_count, sort_by_replies_count_direction = False, True
+
+    sort_by : str | None = request.query_params.get('sort', None)
+    if sort_by is not None:
+        sort_by : List[str] = sort_by.split(',')
+        unique_sort_by = set(sort_by)
+        new_unique_sort_by = set()
+
+        for field in unique_sort_by:
+            if field.find('postcommentlike') != -1:
+                if field.find('-') != -1:
+                    # if the field has a '-' at the beginning, it means that it should be sorted in descending order
+                    sort_by_likes_count_direction = False
+
+                sort_by_likes_count = True
+                continue
+            elif field.find('postcommentreply') != -1:
+                if field.find('-') != -1:
+                    sort_by_replies_count_direction = False
+
+                sort_by_replies_count = True
+                continue
+
+            if field in comment_queryset_allowed_order_by_fields:
+                new_unique_sort_by.add(field)
+
+        sort_by = list(new_unique_sort_by)
+
+    if sort_by_likes_count:
+        queryset = queryset.annotate(
+            likes_count=Count('postcommentlike')
+        )
+
+        if sort_by_likes_count_direction:
+            sort_by.append('likes_count')
+        else:
+            sort_by.append('-likes_count')
+
+    if sort_by_replies_count:
+        queryset = queryset.annotate(
+            replies_count=Count('postcommentreply')
+        )
+
+        if sort_by_replies_count_direction:
+            sort_by.append('replies_count')
+        else:
+            sort_by.append('-replies_count')
+
+    print(sort_by)
+    if sort_by:
+        queryset = queryset.order_by(*sort_by)
+    else:
+        queryset = queryset.order_by('-created_at')
+
+    if fields_only:
+        return queryset.only(*fields_only)
+
+    return queryset.exclude(status__name='deleted')
+
+
 class TeamViewService:
     @staticmethod
     def get_10_popular_posts(request):
@@ -633,9 +727,23 @@ class TeamViewService:
 
     @staticmethod
     def get_comments(request, pk, post_id):
-        query = PostComment.objects.filter(
+        query = create_comment_queryset_without_prefetch_for_post(
+            request,
+            fields_only=[
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name'
+            ],
             post__team__id=pk,
             post__id=post_id
+        ).select_related(
+            'user',
+            'status'
         ).prefetch_related(
             Prefetch(
                 'postcommentlike_set',
@@ -645,19 +753,7 @@ class TeamViewService:
                 'postcommentreply_set',
                 queryset=PostCommentReply.objects.only('id')
             ),
-        ).select_related(
-            'user',
-            'status'
-        ).only(
-            'id',
-            'content',
-            'created_at',
-            'updated_at',
-            'user__id',
-            'user__username',
-            'status__id',
-            'status__name'
-        ).order_by('-created_at')
+        )
 
         if request.user.is_authenticated:
             query = query.annotate(

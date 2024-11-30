@@ -12,6 +12,7 @@ from rest_framework.status import (
     HTTP_404_NOT_FOUND, 
     HTTP_500_INTERNAL_SERVER_ERROR
 )
+from rest_framework.permissions import IsAuthenticated
 
 from api.paginators import CustomPageNumberPagination
 from api.websocket import send_message_to_centrifuge
@@ -19,11 +20,21 @@ from games.models import Game, GameChat, GameChatMessage, LineScore
 from games.serializers import GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
 from games.services import combine_game_and_linescores, combine_games_and_linescores, create_game_queryset_without_prefetch, get_today_games
 from players.models import PlayerStatistics
-from teams.models import TeamName
+from teams.models import TeamLike, TeamName
+from users.authentication import CookieJWTAccessAuthentication
 from users.utils import validate_websocket_subscription_token
 
 
 class GameViewSet(viewsets.ViewSet):
+    authentication_classes = [CookieJWTAccessAuthentication]
+
+    def get_permissions(self):
+        permission_classes = []
+        if self.action == 'post_chat_message':
+            permission_classes = [IsAuthenticated]
+
+        return [permission() for permission in permission_classes]
+
     @method_decorator(cache_page(60*1))
     @action(detail=False, methods=['get'])
     def today(self, request):
@@ -81,7 +92,7 @@ class GameViewSet(viewsets.ViewSet):
             )
         ).select_related(
             'home_team', 'visitor_team'
-        ).all()
+        )
 
         pagination = CustomPageNumberPagination()
         paginated_games = pagination.paginate_queryset(games, request)
@@ -198,8 +209,12 @@ class GameViewSet(viewsets.ViewSet):
 
         return Response(serializer.data)
     
-    @action(detail=True, methods=['post'], url_path='chat')
-    def get_chat(self, request, pk=None):
+    @action(
+        detail=True, 
+        methods=['post'], 
+        url_path='chat', 
+    )
+    def post_chat_message(self, request, pk=None):
         channel = f'games/{pk}/live-chat'
 
         subscription_token = request.data.get('subscription_token', None)
@@ -208,6 +223,7 @@ class GameViewSet(viewsets.ViewSet):
                 {'error': 'Subscription token is required'}, 
                 status=HTTP_400_BAD_REQUEST
             )
+
         if not validate_websocket_subscription_token(
             subscription_token, 
             channel, 
@@ -233,11 +249,17 @@ class GameViewSet(viewsets.ViewSet):
                 status=HTTP_404_NOT_FOUND
             )
         
+        user_favorite_team = TeamLike.objects.filter(
+            user=request.user,
+            favorite=True,
+        ).select_related('team').first()
+        
         resp_json = send_message_to_centrifuge(channel, {
             'message': message,
             'user': {
                 'id': request.user.id,
-                'username': request.user.get_username()
+                'username': request.user.get_username(),
+                'favorite_team': user_favorite_team.team.symbol if user_favorite_team else None
             },
             'game': game.game_id,
             'created_at': int(datetime.now().timestamp())

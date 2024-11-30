@@ -148,7 +148,6 @@ class PostCommentStatusDisplayName(models.Model):
         unique_together = ['post_comment_status', 'language']
 
 class PostComment(models.Model):
-
     id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 

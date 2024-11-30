@@ -1,9 +1,12 @@
+from datetime import datetime, timezone
 from typing import List
-from management.models import Inquiry
-from teams.models import Post, PostComment
-from users.models import User, UserChat
+from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryTypeDisplayName
+from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName
+from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage
 
-from django.db.models import Q
+from django.db.models import Q, Exists, OuterRef, Prefetch
+
+from users.serializers import UserChatParticipantMessageCreateSerializer
 
 
 user_queryset_allowed_order_by_fields = (
@@ -276,3 +279,261 @@ def create_inquiry_queryset_without_prefetch_for_user(
         return queryset.only(*fields_only)
 
     return queryset
+
+
+class UserViewService:
+    @staticmethod
+    def get_user_posts(request, user_id):
+        posts = create_post_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id', 
+                'title', 
+                'created_at', 
+                'updated_at', 
+                'user__id', 
+                'user__username', 
+                'team__id', 
+                'team__symbol', 
+                'status__id', 
+                'status__name'
+            ],
+            user__id=user_id,
+            status__name='created'
+        ).prefetch_related(
+            'postlike_set',
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts
+    
+    @staticmethod
+    def get_user_comments(request, user_id):
+        query = create_comment_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name',
+                'post__id',
+                'post__title',
+                'post__team__id',
+                'post__team__symbol',
+                'post__user__id',
+                'post__user__username'
+            ],
+            user__id=user_id,
+        ).prefetch_related(
+            'postcommentlike_set',
+            'postcommentreply_set',
+        ).select_related(
+            'user',
+            'status',
+            'post__team',
+            'post__user'
+        )
+
+        if request.user.is_authenticated:
+            query = query.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+
+        return query
+    
+
+class UserChatService:
+    @staticmethod
+    def get_chat(request, user_id):
+        return UserChat.objects.filter(
+            userchatparticipant__user=request.user,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__user__chat_blocked=False,
+        ).filter(
+            userchatparticipant__user__id=user_id,
+        ).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.order_by('-created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        ).first()
+    
+    @staticmethod
+    def get_chat_by_id(id):
+        return UserChat.objects.prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.order_by('-created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        ).filter(
+            id=id
+        ).first()
+    
+    @staticmethod
+    def get_my_chats(request):
+        return create_userchat_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[],
+            userchatparticipant__user=request.user,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__chat_deleted=False
+        ).prefetch_related(
+            Prefetch(
+                'userchatparticipant_set',
+                UserChatParticipant.objects.prefetch_related(
+                    Prefetch(
+                        'userchatparticipantmessage_set',
+                        queryset=UserChatParticipantMessage.objects.order_by('created_at')
+                    ),
+                ).select_related(
+                    'user',
+                )
+            )
+        )
+    
+    @staticmethod
+    def create_chat_message(request, user_id):
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=request.user,
+        ).filter(
+            userchatparticipant__user__id=user_id,
+            userchatparticipant__chat_blocked=False,
+            userchatparticipant__user__chat_blocked=False,
+        ).first()
+
+        if not chat:
+            return None, None
+
+        participants = chat.userchatparticipant_set.all()
+
+        serializer = UserChatParticipantMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = serializer.save(
+            sender=participants.get(user=request.user),
+            receiver=participants.get(user__id=user_id)
+        )
+        chat.updated_at = datetime.now(timezone.utc)
+        chat.save()
+
+        return message, chat
+    
+
+class InquiryService:
+    @staticmethod
+    def get_my_inquiries(request):
+        return Inquiry.objects.filter(user=request.user).order_by('-created_at').select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('-created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
+                    )
+                )
+            )
+        )
+    
+    @staticmethod
+    def get_inquiry(request, inquiry_id):
+        return Inquiry.objects.filter(
+            id=inquiry_id, 
+            user=request.user
+        ).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('-created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
+                    )
+                )
+            )
+        ).first()
+
+    @staticmethod
+    def get_inquiry_by_id(inquiry_id):
+        return Inquiry.objects.filter(id=inquiry_id).select_related(
+            'inquiry_type',
+            'user'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_type__inquirytypedisplayname_set',
+                queryset=InquiryTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'messages',
+                queryset=InquiryMessage.objects.order_by('-created_at')
+            ),
+            Prefetch(
+                'inquirymoderator_set',
+                queryset=InquiryModerator.objects.select_related(
+                    'moderator'
+                ).prefetch_related(
+                    Prefetch(
+                        'inquirymoderatormessage_set',
+                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
+                    )
+                )
+            )
+        ).first()
