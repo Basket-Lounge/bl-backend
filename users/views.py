@@ -122,9 +122,9 @@ class UserViewSet(ViewSet):
     @me.mapping.patch
     def patch_me(self, request):
         user = request.user
-        UserService.update_user(request.data, user)
+        UserService.update_user(request, user)
 
-        user = UserService.get_user_by_id(request, user.id)
+        user = UserService.get_user_by_id(user.id)
         serializer = UserSerializerService.serialize_user(user)
 
         return Response(serializer.data)
@@ -526,8 +526,8 @@ class UserViewSet(ViewSet):
             request,
             user_id,
             chat.id,
-            chat_serializer.data,
-            message_serializer.data
+            chat_serializer,
+            message_serializer
         )
         
         return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})

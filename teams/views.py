@@ -810,6 +810,8 @@ class TeamViewSet(viewsets.ViewSet):
         comment.status = PostCommentStatus.get_deleted_role()
         comment.save()
 
+        print(comment.status)
+
         return Response(
             {'message': 'Comment deleted successfully!'}, 
             status=HTTP_200_OK

@@ -548,7 +548,6 @@ def create_comment_queryset_without_prefetch_for_post(
         else:
             sort_by.append('-replies_count')
 
-    print(sort_by)
     if sort_by:
         queryset = queryset.order_by(*sort_by)
     else:

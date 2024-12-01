@@ -536,6 +536,7 @@ class UserViewService:
                 'post__user__username'
             ],
             user__id=user_id,
+            status__name='created'
         ).prefetch_related(
             'postcommentlike_set',
             'postcommentreply_set',

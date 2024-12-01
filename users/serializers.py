@@ -573,7 +573,7 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
             return None
         
         context = self.context.get('userchatparticipantmessage', {})
-        last_message = obj.userchatparticipantmessage_set.all().last()
+        last_message = obj.userchatparticipantmessage_set.all().first()
 
         if not last_message:
             return None
