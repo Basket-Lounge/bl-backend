@@ -21,9 +21,11 @@ from teams.models import (
     PostCommentReply, 
     PostLike, 
     PostStatusDisplayName, 
-    Team, 
+    Team,
+    TeamLike, 
     TeamName
 )
+from teams.serializers import TeamSerializer
 from teams.utils import calculate_time
 from users.services import create_post_queryset_without_prefetch_for_user
 
@@ -556,6 +558,42 @@ def create_comment_queryset_without_prefetch_for_post(
         return queryset.only(*fields_only)
 
     return queryset.exclude(status__name='deleted')
+
+
+class TeamService:
+    @staticmethod
+    def get_team_with_user_like(user):
+        return Team.objects.prefetch_related(
+            'teamname_set'
+        ).filter(
+            teamlike__user=user
+        ).order_by('symbol').only('id', 'symbol')
+    
+class TeamSerializerService:
+    @staticmethod
+    def serialize_teams_with_user_favorite(teams, user):
+        serializer = TeamSerializer(
+            teams,
+            many=True,
+            fields=['id', 'symbol', 'teamname_set'],
+            context={
+                'teamname': {
+                    'fields': ['name', 'language']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        favorite_team = TeamLike.objects.filter(user=user, favorite=True).first()
+        if favorite_team:
+            for team in serializer.data:
+                if team['id'] == favorite_team.team.id:
+                    team['favorite'] = True
+                    break
+
+        return serializer.data
 
 
 class TeamViewService:
