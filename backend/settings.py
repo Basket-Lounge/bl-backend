@@ -261,7 +261,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "update_top_10_players": {
         "task": "players.tasks.update_top_10_players",
-        "schedule": crontab(minute="*/1"),
+        "schedule": crontab(minute=0, hour=5),
         "options": {"queue": "low_priority"},
     },
 }
