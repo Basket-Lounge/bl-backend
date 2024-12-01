@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
-from django.db.models import Exists, OuterRef, Prefetch
+from django.db.models import Exists, OuterRef
 
 from rest_framework.decorators import action
 from rest_framework.viewsets import ViewSet
@@ -14,7 +14,6 @@ from rest_framework.status import (
     HTTP_201_CREATED, 
     HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
-    HTTP_500_INTERNAL_SERVER_ERROR
 )
 
 from api.paginators import CustomPageNumberPagination
@@ -22,37 +21,25 @@ from api.websocket import send_message_to_centrifuge
 from games.models import Game
 from management.models import (
     Inquiry, 
-    InquiryMessage, 
-    InquiryModerator, 
-    InquiryModeratorMessage, 
-    InquiryTypeDisplayName
 )
 from management.serializers import (
     InquiryMessageCreateSerializer, 
     InquiryMessageSerializer, 
-    InquirySerializer, 
 )
 from teams.models import (
-    PostComment, 
-    PostCommentLike, 
-    PostLike, 
-    PostStatusDisplayName, 
     Team, 
     TeamLike
 )
 from teams.serializers import TeamSerializer
+from teams.services import TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
-from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
+from users.models import Role, User, UserChat, UserChatParticipant, UserLike
 from users.serializers import (
     CustomSocialLoginSerializer, 
     PostCommentSerializer, 
     PostSerializer,
     RoleSerializer,
-    UserChatParticipantMessageCreateSerializer,
-    UserChatParticipantMessageSerializer,
-    UserChatSerializer, 
     UserSerializer,
-    UserUpdateSerializer
 )
 
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
@@ -60,7 +47,18 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 from dj_rest_auth.registration.views import SocialLoginView
 
-from users.services import InquiryService, UserChatService, UserViewService, create_comment_queryset_without_prefetch_for_user, create_post_queryset_without_prefetch_for_user, create_userchat_queryset_without_prefetch_for_user
+from users.services import (
+    InquirySerializerService, 
+    InquiryService, 
+    UserChatSerializerService, 
+    UserChatService, 
+    UserSerializerService, 
+    UserService, 
+    UserViewService, 
+    send_update_to_all_parties_regarding_chat, 
+    send_update_to_all_parties_regarding_inquiry
+)
+
 from users.utils import (
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
@@ -103,129 +101,43 @@ class UserViewSet(ViewSet):
             permission_classes = [IsAuthenticated]
         elif self.action == 'delete_favorite_team':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'get_favorite_teams':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'put_favorite_teams':
+            permission_classes=[IsAuthenticated]
         elif self.action == 'me':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'patch_me':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'enable_chat':
+            permission_classes=[IsAuthenticated]
 
         return [permission() for permission in permission_classes]
     
     @action(detail=False, methods=['get'], url_path='me')
     def me(self, request):
-        user = request.user
-        serializer = UserSerializer(
-            user,
-            fields=(
-                'id',
-                'username', 
-                'email', 
-                'role_data',
-                'level',
-                'introduction', 
-                'is_profile_visible',
-                'chat_blocked',
-                'likes_count',
-                'favorite_team',
-            ),
-            context={
-                'team': {
-                    'fields': ['id', 'symbol']
-                },
-            }
-        )
-
-        return Response(serializer.data)
+        user_serializer = UserSerializerService.serialize_user(request.user)
+        return Response(user_serializer.data)
     
     @me.mapping.patch
     def patch_me(self, request):
         user = request.user
+        UserService.update_user(request.data, user)
 
-        serializer = UserUpdateSerializer(
-            user, 
-            data=request.data,
-            partial=True
-        )         
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-
-        user = User.objects.filter(id=user.id).select_related(
-            'role'
-        ).prefetch_related(
-            'liked_user',
-            Prefetch(
-                'teamlike_set',
-                queryset=TeamLike.objects.select_related('team')
-            )
-        ).first()
-
-        serializer = UserSerializer(
-            user,
-            fields=[
-                'id',
-                'username',
-                'email',
-                'role_data',
-                'introduction',
-                'level',
-                'created_at',
-                'is_profile_visible',
-                'chat_blocked',
-                'likes_count',
-                'favorite_team',
-            ],
-            context={
-                'team': {
-                    'fields': ['id', 'symbol']
-                },
-            }
-        )
+        user = UserService.get_user_by_id(request, user.id)
+        serializer = UserSerializerService.serialize_user(user)
 
         return Response(serializer.data)
 
-
     def retrieve(self, request, pk=None):
-        fields = [
-            'id',
-            'username',
-            'role_data',
-            'level',
-            'introduction',
-            'is_profile_visible',
-            'chat_blocked',
-            'likes_count',
-            'favorite_team',
-        ]
-
-        try:
-            user = User.objects.select_related('role').only(
-                'username', 'role', 'experience', 'introduction', 'is_profile_visible', 'id', 'chat_blocked'
-            ).prefetch_related(
-                'liked_user',
-                Prefetch(
-                    'teamlike_set',
-                    queryset=TeamLike.objects.select_related('team')
-                )
-            )
-
-            if request.user.is_authenticated:
-                user = user.annotate(
-                    liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
-                ).get(id=pk)
-
-                fields.append('liked')
-            else:
-                user = user.get(id=pk)
-
-        except User.DoesNotExist:
+        user = UserService.get_user_with_liked_by_id(request, pk)
+        if not user:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        serializer = UserSerializer(
-            user,
-            fields=fields,
-            context={
-                'team': {
-                    'fields': ['id', 'symbol']
-                },
-            }
-        )
+        if request.user.is_authenticated:
+            serializer = UserSerializerService.serialize_user_with_liked(user)
+        else:
+            serializer = UserSerializerService.serialize_user(user)
 
         return Response(serializer.data)
     
@@ -233,7 +145,6 @@ class UserViewSet(ViewSet):
         detail=True,
         methods=['get'],
         url_path='favorite-teams',
-        permission_classes=[AllowAny]
     )
     def get_user_favorite_teams(self, request, pk=None):
         try:
@@ -241,43 +152,15 @@ class UserViewSet(ViewSet):
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        query = Team.objects.prefetch_related(
-            'teamname_set'
-        ).filter(
-            teamlike__user=user
-        ).order_by('symbol').only('id', 'symbol')
+        teams = TeamService.get_team_with_user_like(user)
+        data = TeamSerializerService.serialize_teams_with_user_favorite(teams, user)
 
-        if not query.exists():
-            return Response([])
-
-        serializer = TeamSerializer(
-            query,
-            many=True,
-            fields=['id', 'symbol', 'teamname_set'],
-            context={
-                'teamname': {
-                    'fields': ['name', 'language']
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
-
-        favorite_team = TeamLike.objects.filter(user=user, favorite=True).first()
-        if favorite_team:
-            for team in serializer.data:
-                if team['id'] == favorite_team.team.id:
-                    team['favorite'] = True
-                    break
-
-        return Response(serializer.data)
+        return Response(data)
     
     @action(
         detail=False, 
         methods=['get'], 
         url_path=r'me/favorite-teams', 
-        permission_classes=[IsAuthenticated]
     )
     def get_favorite_teams(self, request, pk=None):
         user = request.user
@@ -601,26 +484,7 @@ class UserViewSet(ViewSet):
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(chats, request)
 
-        serializer = UserChatSerializer(
-            paginated_data,
-            many=True,
-            fields=['id', 'participants'],
-            context={
-                'userchatparticipant': {
-                    'fields': [
-                        'user_data', 
-                        'last_message', 
-                        'unread_messages_count'
-                    ]
-                },
-                'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data']
-                },
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
+        serializer = UserChatSerializerService.serialize_chats(paginated_data)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -638,32 +502,7 @@ class UserViewSet(ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
 
         user_participant = chat.userchatparticipant_set.all().get(user=user)
-        serializer = UserChatSerializer(
-            chat,
-            fields=[
-                'id', 
-                'participants', 
-                'created_at', 
-                'updated_at'
-            ],
-            context={
-                'userchatparticipant': {
-                    'fields': ['user_data', 'messages']
-                },
-                'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data'],
-                },
-                'userchatparticipantmessage_extra': {
-                    'user_last_deleted_at': {
-                        'id': user_participant.id,
-                        'last_deleted_at': user_participant.last_deleted_at
-                    }
-                },
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
+        serializer = UserChatSerializerService.serialize_chat(chat, user_participant)
 
         return Response(serializer.data)
     
@@ -678,53 +517,16 @@ class UserViewSet(ViewSet):
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        message_serializer = UserChatParticipantMessageSerializer(
-            message,
-            fields_exclude=['sender_data'],
-            context={
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
+        message_serializer = UserChatSerializerService.serialize_message_for_chat(message)
 
         chat = UserChatService.get_chat_by_id(chat.id)
+        chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
 
-        chat_serializer = UserChatSerializer(
-            chat,
-            fields=['id', 'participants', 'created_at', 'updated_at'],
-            context={
-                'userchatparticipant': {
-                    'fields': [
-                        'user_data', 
-                        'last_message', 
-                        'unread_messages_count'
-                    ]
-                },
-                'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data']
-                },
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
-
-        sender_chat_notification_channel_name = f'users/{request.user.id}/chats/updates'
-        send_message_to_centrifuge(
-            sender_chat_notification_channel_name,
-            chat_serializer.data
-        )
-
-        recipient_chat_notification_channel_name = f'users/{user_id}/chats/updates'
-        send_message_to_centrifuge(
-            recipient_chat_notification_channel_name,
-            chat_serializer.data
-        ) 
-
-        chat_channel_name = f'users/chats/{chat.id}'
-        send_message_to_centrifuge(
-            chat_channel_name, 
+        send_update_to_all_parties_regarding_chat(
+            request,
+            user_id,
+            chat.id,
+            chat_serializer.data,
             message_serializer.data
         )
         
@@ -753,36 +555,13 @@ class UserViewSet(ViewSet):
         ).update(last_read_at=datetime.now(timezone.utc))
 
         chat = UserChatService.get_chat_by_id(chat.id)
-        chat_serializer = UserChatSerializer(
-            chat,
-            fields=['id', 'participants', 'created_at', 'updated_at'],
-            context={
-                'userchatparticipant': {
-                    'fields': [
-                        'user_data', 
-                        'last_message', 
-                        'unread_messages_count'
-                    ]
-                },
-                'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data']
-                },
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
+        chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
 
         sender_chat_notification_channel_name = f'users/{user.id}/chats/updates'
-        resp_json = send_message_to_centrifuge(
+        send_message_to_centrifuge(
             sender_chat_notification_channel_name,
             chat_serializer.data
         )
-        if resp_json.get('error', None):
-            return Response(
-                {'error': 'Notification Delivery To Sender Unsuccessful'}, 
-                status=HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
         return Response(status=HTTP_200_OK)
     
@@ -848,7 +627,7 @@ class UserViewSet(ViewSet):
         url_path=r'chats',
         permission_classes=[IsAuthenticated]
     )
-    def create_chat(self, request, pk=None):
+    def enable_chat(self, request, pk=None):
         try:
             target_user = User.objects.get(id=pk)
         except User.DoesNotExist:
@@ -969,49 +748,7 @@ class UserViewSet(ViewSet):
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(inquiries, request)
 
-        serializer = InquirySerializer(
-            paginated_data,
-            many=True,
-            fields_exclude=[
-                'user_data', 
-                'unread_messages_count', 
-                'messages'
-            ],
-            context={
-                'inquirytypedisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
-                'inquirymoderator': {
-                    'fields': [
-                        'moderator_data', 
-                        'messages', 
-                        'last_message',
-                        'unread_messages_count'
-                    ]
-                },
-                'moderator': {
-                    'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        inquiry.id: {
-                            'id': request.user.id, 
-                            'last_read_at': inquiry.last_read_at
-                        }
-                        for inquiry in paginated_data
-                    }
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
+        serializer = InquirySerializerService.serialize_inquiries(request, paginated_data)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -1025,35 +762,8 @@ class UserViewSet(ViewSet):
         inquiry = InquiryService.get_inquiry(request, inquiry_id)
         if not inquiry:
             return Response(status=HTTP_404_NOT_FOUND)
-
-        serializer = InquirySerializer(
-            inquiry,
-            fields_exclude=[
-                'user_data', 
-                'last_message', 
-                'unread_messages_count'
-            ],
-            context={
-                'inquirytypedisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
-                'inquirymoderator': {
-                    'fields': ['moderator_data', 'messages']
-                },
-                'moderator': {
-                    'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
+        
+        serializer = InquirySerializerService.serialize_inquiry(inquiry)
 
         return Response(serializer.data)
     
@@ -1114,122 +824,14 @@ class UserViewSet(ViewSet):
         inquiry.updated_at = datetime.now(timezone.utc)
         inquiry.save()
 
-        serializer = InquirySerializer(
+        serializer = InquirySerializerService.serialize_inquiry_for_update(request, inquiry)
+
+        send_update_to_all_parties_regarding_inquiry(
             inquiry,
-            fields_exclude=[
-                'user_data', 
-                'messages', 
-                'unread_messages_count'
-            ],
-            context={
-                'user': {
-                    'fields': ['id', 'username']
-                },
-                'inquirytypedisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
-                'inquirymoderator': {
-                    'fields': [
-                        'moderator_data', 
-                        'last_message', 
-                        'unread_messages_count'
-                    ]
-                },
-                'moderator': {
-                    'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        'id': user.id,
-                        'last_read_at': inquiry.last_read_at
-                    }
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
+            user,
+            message_serializer,
+            serializer
         )
-
-        inquiry_channel_name = f'users/inquiries/{inquiry_id}'
-        resp_json = send_message_to_centrifuge(
-            inquiry_channel_name,
-            message_serializer.data
-        )
-        if resp_json.get('error', None):
-            return Response(
-                {'error': 'Message Delivery To Inquiry Unsuccessful'},
-                status=HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        user_inquiry_notification_channel_name = f'users/{user.id}/inquiries/updates'
-        resp_json = send_message_to_centrifuge(
-            user_inquiry_notification_channel_name,
-            serializer.data
-        )
-        if resp_json.get('error', None):
-            return Response(
-                {'error': 'Notification Delivery To User Unsuccessful'},
-                status=HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        for moderator in inquiry.inquirymoderator_set.all():
-            moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
-
-            inquiry_for_moderators_serializer = InquirySerializer(
-                inquiry,
-                fields_exclude=['user_data', 'messages'],
-                context={
-                    'user': {
-                        'fields': ['id', 'username']
-                    },
-                    'inquirytypedisplayname': {
-                        'fields': ['display_name', 'language_data']
-                    },
-                    'inquirymessage': {
-                        'fields_exclude': ['inquiry_data', 'user_data']
-                    },
-                    'inquirymessage_extra': {
-                        'user_last_read_at': {
-                            'id': moderator.moderator.id,
-                            'last_read_at': moderator.last_read_at
-                        }
-                    },
-                    'inquirymoderator': {
-                        'fields': ['moderator_data', 'last_message', 'unread_messages_count']
-                    },
-                    'moderator': {
-                        'fields': ['id', 'username']
-                    },
-                    'inquirymoderatormessage': {
-                        'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                    },
-                    'inquirymoderatormessage_extra': {
-                        'user_last_read_at': {
-                            'id': moderator.moderator.id,
-                            'last_read_at': moderator.last_read_at
-                        }
-                    },
-                    'language': {
-                        'fields': ['name']
-                    }
-                }
-            )
-
-            resp_json = send_message_to_centrifuge(
-                moderator_inquiry_notification_channel_name,
-                inquiry_for_moderators_serializer.data
-            )
-            if resp_json.get('error', None):
-                return Response(
-                    {'error': 'Notification Delivery To Moderator Unsuccessful'},
-                    status=HTTP_500_INTERNAL_SERVER_ERROR
-                )
         
         return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
     

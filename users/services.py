@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 from typing import List
+from api.websocket import send_message_to_centrifuge
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryTypeDisplayName
-from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName
-from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage
+from management.serializers import InquirySerializer
+from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike
+from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 
 from django.db.models import Q, Exists, OuterRef, Prefetch
 
-from users.serializers import UserChatParticipantMessageCreateSerializer
+from users.serializers import UserChatParticipantMessageCreateSerializer, UserChatParticipantMessageSerializer, UserChatSerializer, UserSerializer, UserUpdateSerializer
 
 
 user_queryset_allowed_order_by_fields = (
@@ -280,6 +282,201 @@ def create_inquiry_queryset_without_prefetch_for_user(
 
     return queryset
 
+def send_update_to_all_parties_regarding_chat(
+    request,
+    recipient_user_id,
+    chat_id,
+    chat_serializer,
+    message_serializer
+):
+    sender_chat_notification_channel_name = f'users/{request.user.id}/chats/updates'
+    send_message_to_centrifuge(
+        sender_chat_notification_channel_name,
+        chat_serializer.data
+    )
+
+    recipient_chat_notification_channel_name = f'users/{recipient_user_id}/chats/updates'
+    send_message_to_centrifuge(
+        recipient_chat_notification_channel_name,
+        chat_serializer.data
+    ) 
+
+    chat_channel_name = f'users/chats/{chat_id}'
+    send_message_to_centrifuge(
+        chat_channel_name, 
+        message_serializer.data
+    )
+
+
+def send_update_to_all_parties_regarding_inquiry(
+    inquiry: Inquiry,
+    user: User,
+    message_serializer,
+    inquiry_update_serializer
+):
+    inquiry_channel_name = f'users/inquiries/{inquiry.id}'
+    send_message_to_centrifuge(
+        inquiry_channel_name,
+        message_serializer.data
+    )
+    
+    user_inquiry_notification_channel_name = f'users/{user.id}/inquiries/updates'
+    send_message_to_centrifuge(
+        user_inquiry_notification_channel_name,
+        inquiry_update_serializer.data
+    )
+    
+    for moderator in inquiry.inquirymoderator_set.all():
+        moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
+
+        inquiry_for_moderators_serializer = InquirySerializer(
+            inquiry,
+            fields_exclude=['user_data', 'messages'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymessage_extra': {
+                    'user_last_read_at': {
+                        'id': moderator.moderator.id,
+                        'last_read_at': moderator.last_read_at
+                    }
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message', 'unread_messages_count']
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'inquirymoderatormessage_extra': {
+                    'user_last_read_at': {
+                        'id': moderator.moderator.id,
+                        'last_read_at': moderator.last_read_at
+                    }
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+        send_message_to_centrifuge(
+            moderator_inquiry_notification_channel_name,
+            inquiry_for_moderators_serializer.data
+        )
+
+class UserService:
+    @staticmethod
+    def get_user_by_id(user_id):
+        return User.objects.filter(id=user_id).select_related(
+            'role'
+        ).prefetch_related(
+            'liked_user',
+            Prefetch(
+                'teamlike_set',
+                queryset=TeamLike.objects.select_related('team')
+            )
+        ).first()
+    
+
+    @staticmethod
+    def get_user_with_liked_by_id(request, user_id):
+        user = User.objects.select_related('role').only(
+            'username', 
+            'role', 
+            'experience', 
+            'introduction', 
+            'is_profile_visible', 
+            'id', 
+            'chat_blocked', 
+            'created_at'
+        ).prefetch_related(
+            'liked_user',
+            Prefetch(
+                'teamlike_set',
+                queryset=TeamLike.objects.select_related('team')
+            )
+        ).filter(id=user_id)
+
+        if request.user.is_authenticated:
+            user = user.annotate(
+                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+            )
+
+        return user.first()
+        
+    
+    @staticmethod
+    def update_user(request, user):
+        serializer = UserUpdateSerializer(
+            user,
+            data=request.data,
+            partial=True
+        )         
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return serializer
+
+class UserSerializerService:
+    @staticmethod
+    def serialize_user(user):
+        return UserSerializer(
+            user,
+            fields=(
+                'id',
+                'username', 
+                'email', 
+                'role_data',
+                'level',
+                'introduction', 
+                'created_at',
+                'is_profile_visible',
+                'chat_blocked',
+                'likes_count',
+                'favorite_team',
+            ),
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+            }
+        )
+    
+    @staticmethod
+    def serialize_user_with_liked(user):
+        fields = [
+            'id',
+            'username',
+            'role_data',
+            'level',
+            'introduction',
+            'created_at',
+            'is_profile_visible',
+            'chat_blocked',
+            'likes_count',
+            'favorite_team',
+            'liked'
+        ]
+
+        return UserSerializer(
+            user,
+            fields=fields,
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+            }
+        )
 
 class UserViewService:
     @staticmethod
@@ -446,6 +643,93 @@ class UserChatService:
 
         return message, chat
     
+class UserChatSerializerService:
+    @staticmethod
+    def serialize_chats(chats):
+        return UserChatSerializer(
+            chats,
+            many=True,
+            fields=['id', 'participants'],
+            context={
+                'userchatparticipant': {
+                    'fields': [
+                        'user_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+    @staticmethod
+    def serialize_chat(chat: UserChat, user_participant: UserChatParticipant):
+        return UserChatSerializer(
+            chat,
+            fields=[
+                'id', 
+                'participants', 
+                'created_at', 
+                'updated_at'
+            ],
+            context={
+                'userchatparticipant': {
+                    'fields': ['user_data', 'messages']
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data'],
+                },
+                'userchatparticipantmessage_extra': {
+                    'user_last_deleted_at': {
+                        'id': user_participant.id,
+                        'last_deleted_at': user_participant.last_deleted_at
+                    }
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+    @staticmethod
+    def serialize_chat_for_update(chat : UserChat):
+        return UserChatSerializer(
+            chat,
+            fields=['id', 'participants', 'created_at', 'updated_at'],
+            context={
+                'userchatparticipant': {
+                    'fields': [
+                        'user_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+    @staticmethod
+    def serialize_message_for_chat(message : UserChatParticipantMessage):
+        return UserChatParticipantMessageSerializer(
+            message,
+            fields_exclude=['sender_data'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+    
 
 class InquiryService:
     @staticmethod
@@ -537,3 +821,126 @@ class InquiryService:
                 )
             )
         ).first()
+    
+
+class InquirySerializerService:
+    @staticmethod
+    def serialize_inquiries(request, inquiries):
+        return InquirySerializer(
+            inquiries,
+            many=True,
+            fields_exclude=[
+                'user_data', 
+                'unread_messages_count', 
+                'messages'
+            ],
+            context={
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': [
+                        'moderator_data', 
+                        'messages', 
+                        'last_message',
+                        'unread_messages_count'
+                    ]
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'inquirymoderatormessage_extra': {
+                    'user_last_read_at': {
+                        inquiry.id: {
+                            'id': request.user.id, 
+                            'last_read_at': inquiry.last_read_at
+                        }
+                        for inquiry in inquiries
+                    }
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
+    @staticmethod
+    def serialize_inquiry(inquiry):
+        return InquirySerializer(
+            inquiry,
+            fields_exclude=[
+                'user_data', 
+                'last_message', 
+                'unread_messages_count'
+            ],
+            context={
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'messages']
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_inquiry_for_update(request, inquiry):
+        return InquirySerializer(
+            inquiry,
+            fields_exclude=[
+                'user_data', 
+                'messages', 
+                'unread_messages_count'
+            ],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymessage': {
+                    'fields_exclude': ['inquiry_data', 'user_data']
+                },
+                'inquirymoderator': {
+                    'fields': [
+                        'moderator_data', 
+                        'last_message', 
+                        'unread_messages_count'
+                    ]
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'inquirymoderatormessage': {
+                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
+                },
+                'inquirymoderatormessage_extra': {
+                    'user_last_read_at': {
+                        'id': request.user.id,
+                        'last_read_at': inquiry.last_read_at
+                    }
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )

@@ -208,7 +208,6 @@ class UserUpdateSerializer(serializers.Serializer):
         introduction = validated_data.get('introduction', None)
         is_profile_visible = validated_data.get('is_profile_visible', None)
         chat_blocked = validated_data.get('chat_blocked', None)
-        role = validated_data.get('role', None)
         username = validated_data.get('username', None)
 
         if introduction:
