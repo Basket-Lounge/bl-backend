@@ -2,13 +2,22 @@ from datetime import datetime, timedelta
 from typing import List
 import pytz
 
-from games.models import Game, LineScore, TeamStatistics
+from api.websocket import send_message_to_centrifuge
+from games.models import Game, GameChat, GameChatMessage, LineScore, TeamStatistics
 
 from django.db.models import Prefetch, Q
-from django.db import transaction
 
+from games.serializers import GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
 from players.models import Player, PlayerStatistics
-from teams.models import TeamName
+from teams.models import TeamLike, TeamName
+
+from rest_framework.status import (
+    HTTP_400_BAD_REQUEST, 
+    HTTP_404_NOT_FOUND, 
+    HTTP_500_INTERNAL_SERVER_ERROR
+)
+
+from users.utils import validate_websocket_subscription_token
 
 
 def get_today_games():
@@ -351,3 +360,202 @@ def create_game_queryset_without_prefetch(
         return queryset.only(*fields_only)
 
     return queryset
+
+
+class GameService:
+    @staticmethod
+    def get_games(request) -> List[Game]:
+        all_team_names = TeamName.objects.select_related('language')
+
+        return create_game_queryset_without_prefetch(
+            request
+        ).prefetch_related(
+            Prefetch(
+                'line_scores',
+                queryset=LineScore.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=all_team_names
+                    )
+                )
+            ),
+            Prefetch(
+                'home_team__teamname_set',
+                queryset=all_team_names
+            ),
+            Prefetch(
+                'visitor_team__teamname_set',
+                queryset=all_team_names
+            )
+        ).select_related(
+            'home_team', 'visitor_team'
+        )
+    
+    @staticmethod
+    def get_game(pk):
+        return Game.objects.select_related(
+            'home_team', 'visitor_team'
+        ).prefetch_related(
+            'teamstatistics_set',
+        ).get(game_id=pk)
+    
+    @staticmethod
+    def get_game_line_scores(game):
+        return LineScore.objects.filter(
+            game=game
+        ).select_related(
+            'game',
+            'team'
+        ).order_by(
+            'game__game_date_est',
+            'game__game_sequence'
+        )
+    
+    @staticmethod
+    def get_game_players_statistics(game_id):
+        return PlayerStatistics.objects.filter(
+            game__game_id=game_id
+        ).select_related(
+            'player',
+            'team'
+        ).order_by(
+            'team__id',
+            'order',
+            '-starter'
+        ).defer(
+            'game'
+        )
+    
+    @staticmethod
+    def create_game_chat_message(request, pk):
+        channel = f'games/{pk}/live-chat'
+
+        subscription_token = request.data.get('subscription_token', None)
+        if subscription_token is None:
+            return False, {'error': 'Subscription token is required'}, HTTP_400_BAD_REQUEST
+
+        if not validate_websocket_subscription_token(
+            subscription_token, 
+            channel, 
+            request.user.id
+        ):
+            return False, {'error': 'Invalid subscription token'}, HTTP_400_BAD_REQUEST
+
+        message = request.data.get('message', None)
+        if message is None:
+            return False, {'error': 'Message is required'}, HTTP_400_BAD_REQUEST
+
+        try:
+            game = Game.objects.get(game_id=pk)
+        except Game.DoesNotExist:
+            return False, {'error': 'Game not found'}, HTTP_404_NOT_FOUND
+        
+        user_favorite_team = TeamLike.objects.filter(
+            user=request.user,
+            favorite=True,
+        ).select_related('team').first()
+        
+        resp_json = send_message_to_centrifuge(channel, {
+            'message': message,
+            'user': {
+                'id': request.user.id,
+                'username': request.user.get_username(),
+                'favorite_team': user_favorite_team.team.symbol if user_favorite_team else None
+            },
+            'game': game.game_id,
+            'created_at': int(datetime.now().timestamp())
+        })
+        if resp_json.get('error', None):
+            return False, {'error': 'Message Delivery Unsuccessful'}, HTTP_500_INTERNAL_SERVER_ERROR
+        
+        game_chat, created = GameChat.objects.get_or_create(game=game)
+        GameChatMessage.objects.create(
+            chat=game_chat,
+            message=message,
+            user=request.user
+        )
+
+        return True, None, None
+
+
+class GameSerializerService:
+    @staticmethod
+    def serialize_games(games):
+        return GameSerializer(
+            games,
+            many=True,
+            fields_exclude=[
+                'home_team_statistics',
+                'visitor_team_statistics',
+                'home_team_player_statistics',
+                'visitor_team_player_statistics'
+            ],
+            context={
+                'linescore': {
+                    'fields_exclude': ['id', 'game']
+                },
+                'team': {
+                    'fields': ['id', 'symbol', 'teamname_set']
+                },
+                'teamname': {
+                    'fields': ['name', 'language']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_game(game):
+        game_fields_exclude = [
+            'line_scores',
+            'home_team_player_statistics',
+            'visitor_team_player_statistics'
+        ]
+
+        if game.game_status_id == 1:
+            game_fields_exclude.extend([
+                'home_team_statistics',
+                'visitor_team_statistics'
+            ])
+
+        game_serializer_context = {
+            'team': {'fields': ('id', 'symbol', 'teamname_set')},
+            'teamname': {'fields': ('name', 'language')},
+            'language': {'fields': ('name',)},
+        }
+
+        if game.game_status_id > 1:
+            game_serializer_context.update({
+                'teamstatistics': {'fields_exclude': ('game',)},
+            })
+
+        return GameSerializer(
+            game,
+            fields_exclude=game_fields_exclude,
+            context=game_serializer_context
+        )
+    
+    @staticmethod
+    def serialize_line_scores(linescores):
+        return LineScoreSerializer(
+            linescores,
+            many=True,
+            context={
+                'game': {'fields': ('game_id',)},
+                'team': {'fields': ('id',)},
+            }
+        )
+    
+    @staticmethod
+    def serialize_game_players_statistics(players_statistics):
+        return PlayerStatisticsSerializer(
+            players_statistics,
+            many=True,
+            fields_exclude=['game_data', 'game'],
+            context={
+                'player': {'fields': ('id', 'first_name', 'last_name')},
+                'team': {'fields': ('id',)},
+            }
+        )

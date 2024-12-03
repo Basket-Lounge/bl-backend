@@ -211,7 +211,6 @@ class UserViewSet(ViewSet):
         detail=True,
         methods=['get'],
         url_path=r'posts',
-        permission_classes=[AllowAny]
     )
     def get_user_posts(self, request, pk=None):
         try:
@@ -231,7 +230,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['get'],
         url_path=r'me/posts',
-        permission_classes=[IsAuthenticated]
     )
     def get_posts(self, request):
         user = request.user
@@ -258,7 +256,6 @@ class UserViewSet(ViewSet):
         detail=True,
         methods=['get'],
         url_path=r'comments',
-        permission_classes=[AllowAny]
     )
     def get_user_comments(self, request, pk=None):
         try:
@@ -278,7 +275,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['get'],
         url_path=r'me/comments',
-        permission_classes=[IsAuthenticated]
     )
     def get_comments(self, request):
         user = request.user
@@ -295,7 +291,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['get'],
         url_path=r'me/chats',
-        permission_classes=[IsAuthenticated]
     )
     def get_chats(self, request):
         chats = UserChatService.get_my_chats(request)
@@ -310,7 +305,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['get'],
         url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)',
-        permission_classes=[IsAuthenticated]
     )
     def get_chat(self, request, user_id):
         user = request.user
@@ -333,7 +327,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['post'],
         url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/messages',
-        permission_classes=[IsAuthenticated]
     )
     def post_chat_message(self, request, user_id):
         message, chat = UserChatService.create_chat_message(request, user_id)
@@ -359,7 +352,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['put'],
         url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/mark-as-read',
-        permission_classes=[IsAuthenticated]
     )
     def mark_chat_messages_as_read(self, request, user_id):
         user = request.user
@@ -380,7 +372,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['post'],
         url_path=r'me/chats/(?P<user_id>[0-9a-f-])/block',
-        permission_classes=[IsAuthenticated]
     )
     def block_chat(self, request, user_id):
         UserChatService.block_chat(request, user_id)
@@ -390,7 +381,6 @@ class UserViewSet(ViewSet):
         detail=True,
         methods=['post'],
         url_path=r'chats',
-        permission_classes=[IsAuthenticated]
     )
     def enable_chat(self, request, pk=None):
         try:
@@ -408,7 +398,6 @@ class UserViewSet(ViewSet):
         detail=True,
         methods=['post'],
         url_path=r'likes',
-        permission_classes=[IsAuthenticated]
     )
     def post_like(self, request, pk=None):
         user = request.user
@@ -444,7 +433,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['get'],
         url_path=r'me/inquiries',
-        permission_classes=[IsAuthenticated]
     )
     def get_inquiries(self, request):
         inquiries = InquiryService.get_my_inquiries(request)
@@ -460,7 +448,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['get'],
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)',
-        permission_classes=[IsAuthenticated]
     )
     def get_inquiry(self, request, inquiry_id):
         inquiry = InquiryService.get_inquiry(request, inquiry_id)
@@ -475,7 +462,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['put'],
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/mark-as-read',
-        permission_classes=[IsAuthenticated]
     )
     def mark_inquiry_messages_as_read(self, request, inquiry_id):
         user = request.user
@@ -497,7 +483,6 @@ class UserViewSet(ViewSet):
         detail=False,
         methods=['post'],
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/messages',
-        permission_classes=[IsAuthenticated]
     )
     def post_inquiry_message(self, request, inquiry_id):
         user = request.user
