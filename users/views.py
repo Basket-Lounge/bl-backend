@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
-from django.db.models import Exists, OuterRef
 
 from rest_framework.decorators import action
 from rest_framework.viewsets import ViewSet
@@ -26,20 +25,12 @@ from management.serializers import (
     InquiryMessageCreateSerializer, 
     InquiryMessageSerializer, 
 )
-from teams.models import (
-    Team, 
-    TeamLike
-)
-from teams.serializers import TeamSerializer
-from teams.services import TeamSerializerService, TeamService
+from teams.services import PostSerializerService, TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
-from users.models import Role, User, UserChat, UserChatParticipant, UserLike
+from users.models import Role, User, UserChat
 from users.serializers import (
     CustomSocialLoginSerializer, 
-    PostCommentSerializer, 
-    PostSerializer,
     RoleSerializer,
-    UserSerializer,
 )
 
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
@@ -49,7 +40,8 @@ from dj_rest_auth.registration.views import SocialLoginView
 
 from users.services import (
     InquirySerializerService, 
-    InquiryService, 
+    InquiryService,
+    PostCommentSerializerService, 
     UserChatSerializerService, 
     UserChatService, 
     UserSerializerService, 
@@ -111,6 +103,30 @@ class UserViewSet(ViewSet):
             permission_classes = [IsAuthenticated]
         elif self.action == 'enable_chat':
             permission_classes=[IsAuthenticated]
+        elif self.action == 'post_like':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'delete_like':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_chats':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_chat':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'delete_chat':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'post_chat_message':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'mark_chat_messages_as_read':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'block_chat':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_inquiries':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_inquiry':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'mark_inquiry_messages_as_read':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'post_inquiry_message':
+            permission_classes=[IsAuthenticated]
 
         return [permission() for permission in permission_classes]
     
@@ -154,7 +170,6 @@ class UserViewSet(ViewSet):
 
         teams = TeamService.get_team_with_user_like(user)
         data = TeamSerializerService.serialize_teams_with_user_favorite(teams, user)
-
         return Response(data)
     
     @action(
@@ -163,64 +178,15 @@ class UserViewSet(ViewSet):
         url_path=r'me/favorite-teams', 
     )
     def get_favorite_teams(self, request, pk=None):
-        user = request.user
-
-        query = Team.objects.prefetch_related(
-            'teamname_set'
-        ).filter(
-            teamlike__user=user
-        ).order_by('symbol').only('id', 'symbol')
-
-        if not query.exists():
-            return Response([])
-
-        serializer = TeamSerializer(
-            query,
-            many=True,
-            fields=['id', 'symbol', 'teamname_set'],
-            context={
-                'teamname': {
-                    'fields': ['name', 'language']
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
-
-        favorite_team = TeamLike.objects.filter(user=user, favorite=True).first()
-        if favorite_team:
-            for team in serializer.data:
-                if team['id'] == favorite_team.team.id:
-                    team['favorite'] = True
-                    break
-
-        return Response(serializer.data)
+        teams = TeamService.get_team_with_user_like(request.user)
+        data = TeamSerializerService.serialize_teams_with_user_favorite(teams, request.user)
+        return Response(data)
 
     @get_favorite_teams.mapping.put
     def put_favorite_teams(self, request):
-        user = request.user
-        data = request.data
-
-        count_favorite_teams = 0
-        favorite_team_id = None
-        for team in data:
-            if 'favorite' in team and team['favorite']:
-                count_favorite_teams += 1
-                favorite_team_id = team['id']
-            
-            if count_favorite_teams > 1:
-                return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'Only one favorite team allowed'})
-            
-
-        team_ids = [team['id'] for team in data]
-        teams = Team.objects.filter(id__in=team_ids)
-
-        TeamLike.objects.filter(user=user).delete()
-        TeamLike.objects.bulk_create([
-            TeamLike(user=user, team=team) if favorite_team_id != team.id else TeamLike(user=user, team=team, favorite=True)
-            for team in teams
-        ])
+        created, error = TeamService.update_user_favorite_teams(request)
+        if error:
+            return Response(status=HTTP_400_BAD_REQUEST, data=error)
 
         return Response(status=HTTP_201_CREATED)
     
@@ -231,81 +197,15 @@ class UserViewSet(ViewSet):
         permission_classes=[IsAuthenticated]
     )
     def post_favorite_team(self, request, team_id):
-        user = request.user
-        TeamLike.objects.get_or_create(user=user, team=Team.objects.get(id=team_id))
-        
-        try:
-            team = Team.objects.filter(id=team_id).only('id', 'symbol').annotate(
-                liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
-            ).get()
-        except Team.DoesNotExist:
-            return Response(status=HTTP_404_NOT_FOUND, data={'error': 'Not exists'}) 
-        
-        serializer = TeamSerializer(
-            team,
-            fields_exclude=['teamname_set'],
-        )
-
+        team = TeamService.add_user_favorite_team(request, team_id)
+        serializer = TeamSerializerService.serialize_team_without_teamname(team)    
         return Response(status=HTTP_201_CREATED, data=serializer.data)
     
     @post_favorite_team.mapping.delete
     def delete_favorite_team(self, request, team_id):
-        user = request.user
-
-        try:
-            TeamLike.objects.get(user=user, team__id=team_id).delete()
-        except TeamLike.DoesNotExist:
-            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'Not exists'})
-        
-        try:
-            team = Team.objects.filter(id=team_id).only('id', 'symbol').annotate(
-                liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
-            ).get()
-        except Team.DoesNotExist:
-            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'Not exists'})
-        
-        serializer = TeamSerializer(
-            team,
-            fields_exclude=['teamname_set'],
-        )
-
+        team = TeamService.remove_user_favorite_team(request, team_id)
+        serializer = TeamSerializerService.serialize_team_without_teamname(team)
         return Response(status=HTTP_200_OK, data=serializer.data)
-    
-    @action(
-        detail=False,
-        methods=['put'],
-        url_path=r'me/profile-visibility',
-        permission_classes=[IsAuthenticated]
-    )
-    def update_profile_visibility(self, request):
-        user = request.user
-        if 'is_profile_visible' not in request.data:
-            return Response(status=HTTP_400_BAD_REQUEST)
-        if not isinstance(request.data['is_profile_visible'], bool):
-            return Response(status=HTTP_400_BAD_REQUEST)
-        
-        user.is_profile_visible = request.data['is_profile_visible']
-        user.save()
-
-        return Response(status=HTTP_201_CREATED)
-    
-    @action(
-        detail=False,
-        methods=['put'],
-        url_path=r'me/introduction',
-        permission_classes=[IsAuthenticated]
-    )
-    def update_introduction(self, request):
-        user = request.user
-        if 'introduction' not in request.data:
-            return Response(status=HTTP_400_BAD_REQUEST)
-        if not isinstance(request.data['introduction'], str):
-            return Response(status=HTTP_400_BAD_REQUEST)
-        
-        user.introduction = request.data['introduction']
-        user.save()
-
-        return Response(status=HTTP_201_CREATED)
     
     @action(
         detail=True,
@@ -321,34 +221,10 @@ class UserViewSet(ViewSet):
 
         posts = UserViewService.get_user_posts(request, pk)
 
-        fields_exclude = ['content']
-        if not request.user.is_authenticated:
-            fields_exclude.append('liked')
-
-
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
 
-        serializer = PostSerializer(
-            paginated_data,
-            many=True,
-            fields_exclude=fields_exclude,
-            context={
-                'user': {
-                    'fields': ('id', 'username')
-                },
-                'team': {
-                    'fields': ('id', 'symbol')
-                },
-                'poststatusdisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
-
+        serializer = PostSerializerService.serialize_posts(request, paginated_data)
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -359,33 +235,12 @@ class UserViewSet(ViewSet):
     )
     def get_posts(self, request):
         user = request.user
-
-        fields_exclude = ['content']
         posts = UserViewService.get_user_posts(request, user.id)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
 
-        serializer = PostSerializer(
-            paginated_data,
-            many=True,
-            fields_exclude=fields_exclude,
-            context={
-                'user': {
-                    'fields': ('id', 'username')
-                },
-                'team': {
-                    'fields': ('id', 'symbol')
-                },
-                'poststatusdisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
-
+        serializer = PostSerializerService.serialize_posts(request, paginated_data)
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -416,26 +271,7 @@ class UserViewSet(ViewSet):
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
 
-        serializer = PostCommentSerializer(
-            paginated_data,
-            fields_exclude=['liked'] if not request.user.is_authenticated else [],
-            many=True,
-            context={
-                'user': {
-                    'fields': ('id', 'username')
-                },
-                'status': {
-                    'fields': ('id', 'name')
-                },
-                'post': {
-                    'fields': ('id', 'title', 'team_data', 'user_data')
-                },
-                'team': {
-                    'fields': ('id', 'symbol')
-                }
-            }
-        )
-
+        serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
         return pagination.get_paginated_response(serializer.data)
 
     @action(
@@ -452,25 +288,7 @@ class UserViewSet(ViewSet):
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
 
-        serializer = PostCommentSerializer(
-            paginated_data,
-            many=True,
-            context={
-                'user': {
-                    'fields': ('id', 'username')
-                },
-                'status': {
-                    'fields': ('id', 'name')
-                },
-                'post': {
-                    'fields': ('id', 'title', 'team_data', 'user_data')
-                },
-                'team': {
-                    'fields': ('id', 'symbol')
-                }
-            }
-        )
-
+        serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -505,6 +323,11 @@ class UserViewSet(ViewSet):
         serializer = UserChatSerializerService.serialize_chat(chat, user_participant)
 
         return Response(serializer.data)
+
+    @get_chat.mapping.delete
+    def delete_chat(self, request, user_id):
+        UserChatService.delete_chat(request, user_id)
+        return Response(status=HTTP_200_OK)
     
     @action(
         detail=False,
@@ -540,19 +363,7 @@ class UserViewSet(ViewSet):
     )
     def mark_chat_messages_as_read(self, request, user_id):
         user = request.user
-        chat = UserChat.objects.filter(
-            userchatparticipant__user=user
-        ).filter(
-            userchatparticipant__user__id=user_id
-        ).first()
-
-        if not chat:
-            return Response(status=HTTP_404_NOT_FOUND)
-
-        UserChatParticipant.objects.filter(
-            chat=chat,
-            user__id=user_id
-        ).update(last_read_at=datetime.now(timezone.utc))
+        UserChatService.mark_chat_as_read(request, user_id)
 
         chat = UserChatService.get_chat_by_id(chat.id)
         chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
@@ -572,55 +383,9 @@ class UserViewSet(ViewSet):
         permission_classes=[IsAuthenticated]
     )
     def block_chat(self, request, user_id):
-        user = request.user
-        chat = UserChat.objects.filter(
-            userchatparticipant__user=user
-        ).filter(
-            userchatparticipant__user__id=user_id
-        ).first()
-
-        if not chat:
-            return Response(status=HTTP_404_NOT_FOUND)
-
-        UserChatParticipant.objects.filter(
-            chat=chat,
-            user=user
-        ).update(
-            chat_blocked=True, 
-            last_blocked_at=datetime.now(timezone.utc)
-        )
-
-        UserChatParticipant.objects.filter(
-            chat=chat,
-            user__id=user_id
-        ).update(last_read_at=datetime.now(timezone.utc))
-
+        UserChatService.block_chat(request, user_id)
         return Response(status=HTTP_201_CREATED)
     
-    @get_chat.mapping.delete
-    def delete_chat(self, request, user_id):
-        user = request.user
-        chat = UserChat.objects.filter(
-            userchatparticipant__user=user
-        ).filter(
-            userchatparticipant__user__id=user_id
-        ).first()
-
-        if not chat:
-            return Response(status=HTTP_404_NOT_FOUND)
-
-        UserChatParticipant.objects.filter(
-            chat=chat,
-            user=user
-        ).update(chat_deleted=True, last_deleted_at=datetime.now(timezone.utc))
-
-        UserChatParticipant.objects.filter(
-            chat=chat,
-            user__id=user_id
-        ).update(last_read_at=datetime.now(timezone.utc))
-
-        return Response(status=HTTP_200_OK)
-
     @action(
         detail=True,
         methods=['post'],
@@ -632,53 +397,12 @@ class UserViewSet(ViewSet):
             target_user = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
-        
-        user = request.user
-        chat = UserChat.objects.filter(
-            userchatparticipant__user=user
-        ).filter(
-            userchatparticipant__user=target_user
-        ).first()
-        
-        if chat:
-            participants = UserChatParticipant.objects.filter(
-                chat=chat,
-            )
 
-            user_participant = participants.filter(user=user).first()
-            target_participant = participants.filter(user=target_user).first()
+        enabled, error_or_data = UserChatService.enable_chat(request, target_user) 
+        if not enabled:
+            return Response(status=HTTP_400_BAD_REQUEST, data=error_or_data)
 
-            # If the chat is blocked by a user that is not the current user, then return 400
-            if target_user.chat_blocked or target_participant.chat_blocked:
-                return Response(status=HTTP_400_BAD_REQUEST, data={'error': '현재 사용자랑 채팅을 할 수 없습니다.'})
-            
-            if user_participant.chat_blocked:
-                user_participant.chat_blocked = False
-                user_participant.last_blocked_at = datetime.now(timezone.utc)
-                user_participant.chat_deleted = False
-                user_participant.last_deleted_at = datetime.now(timezone.utc)
-                target_participant.last_read_at = datetime.now(timezone.utc)
-                user_participant.save()
-
-                return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
-
-            if user_participant.chat_deleted:
-                user_participant.chat_deleted = False
-                user_participant.last_deleted_at = datetime.now(timezone.utc)
-                target_participant.last_read_at = datetime.now(timezone.utc)
-                user_participant.save()
-
-                return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
-
-            return Response(status=HTTP_400_BAD_REQUEST)
-
-        chat = UserChat.objects.create()
-        UserChatParticipant.objects.bulk_create([
-            UserChatParticipant(user=user, chat=chat),
-            UserChatParticipant(user=target_user, chat=chat)
-        ])
-
-        return Response(status=HTTP_201_CREATED, data={'id': str(chat.id)})
+        return Response(status=HTTP_201_CREATED, data=error_or_data)
     
     @action(
         detail=True,
@@ -692,21 +416,13 @@ class UserViewSet(ViewSet):
             user_to_like = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
-
-        UserLike.objects.get_or_create(user=user, liked_user=user_to_like)
-
-        try:
-            user = User.objects.filter(id=pk).annotate(
-                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
-            ).get()
-        except User.DoesNotExist:
-            return Response(status=HTTP_404_NOT_FOUND)
         
-        serializer = UserSerializer(
-            user,
-            fields=['id', 'likes_count', 'liked']
-        )
+        if user == user_to_like:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot like yourself'})
+        
+        user = UserService.create_user_like(request, pk, user, user_to_like)
 
+        serializer = UserSerializerService.serialize_user_with_id_only(user)
         return Response(status=HTTP_201_CREATED, data=serializer.data)
     
     @post_like.mapping.delete
@@ -716,24 +432,12 @@ class UserViewSet(ViewSet):
             user_to_like = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
-
-        try:
-            UserLike.objects.get(user=user, liked_user=user_to_like).delete()
-        except UserLike.DoesNotExist:
-            return Response(status=HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.filter(id=pk).annotate(
-                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
-            ).get()
-        except User.DoesNotExist:
-            return Response(status=HTTP_404_NOT_FOUND)
         
-        serializer = UserSerializer(
-            user,
-            fields=['id', 'likes_count', 'liked']
-        )
+        if user == user_to_like:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot like yourself'})
 
+        user = UserService.delete_user_like(request, pk, user, user_to_like)
+        serializer = UserSerializerService.serialize_user_with_id_only(user)        
         return Response(status=HTTP_200_OK, data=serializer.data)
     
     @action(

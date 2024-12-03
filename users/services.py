@@ -8,7 +8,7 @@ from users.models import User, UserChat, UserChatParticipant, UserChatParticipan
 
 from django.db.models import Q, Exists, OuterRef, Prefetch
 
-from users.serializers import UserChatParticipantMessageCreateSerializer, UserChatParticipantMessageSerializer, UserChatSerializer, UserSerializer, UserUpdateSerializer
+from users.serializers import PostCommentSerializer, UserChatParticipantMessageCreateSerializer, UserChatParticipantMessageSerializer, UserChatSerializer, UserSerializer, UserUpdateSerializer
 
 
 user_queryset_allowed_order_by_fields = (
@@ -426,6 +426,36 @@ class UserService:
         serializer.save()
 
         return serializer
+    
+    @staticmethod
+    def create_user_like(request, pk, user: User, user_to_like: User):
+        '''
+        Create a like for a user, and return the liked user with the attribute of "id" and "liked".
+        '''
+        UserLike.objects.get_or_create(user=user, liked_user=user_to_like)
+        liked_user = User.objects.filter(id=pk).only('id')
+
+        if request.user.is_authenticated:
+            liked_user = liked_user.annotate(
+                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+            )
+
+        return liked_user.first()
+    
+    @staticmethod
+    def delete_user_like(request, pk, user: User, user_to_unlike: User):
+        try:
+            UserLike.objects.get(user=user, liked_user=user_to_unlike).delete()
+        except UserLike.DoesNotExist:
+            pass
+
+        unliked_user = User.objects.filter(id=pk).only('id')
+        if request.user.is_authenticated:
+            user = user.annotate(
+                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+            )
+
+        return unliked_user.first()
 
 class UserSerializerService:
     @staticmethod
@@ -476,6 +506,13 @@ class UserSerializerService:
                     'fields': ['id', 'symbol']
                 },
             }
+        )
+    
+    @staticmethod
+    def serialize_user_with_id_only(user):
+        return UserSerializer(
+            user,
+            fields=['id', 'likes_count', 'liked']
         )
 
 class UserViewService:
@@ -643,6 +680,120 @@ class UserChatService:
         chat.save()
 
         return message, chat
+    
+    @staticmethod
+    def mark_chat_as_read(request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user__id=user_id
+        ).update(last_read_at=datetime.now(timezone.utc))
+
+    @staticmethod
+    def delete_chat(request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user=user
+        ).update(chat_deleted=True, last_deleted_at=datetime.now(timezone.utc))
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user__id=user_id
+        ).update(last_read_at=datetime.now(timezone.utc))
+
+
+    @staticmethod
+    def block_chat(request, user_id):
+        user = request.user
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user__id=user_id
+        ).first()
+
+        if not chat:
+            return
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user=user
+        ).update(
+            chat_blocked=True, 
+            last_blocked_at=datetime.now(timezone.utc)
+        )
+
+        UserChatParticipant.objects.filter(
+            chat=chat,
+            user__id=user_id
+        ).update(last_read_at=datetime.now(timezone.utc))
+
+    @staticmethod
+    def enable_chat(request, target_user):
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=request.user
+        ).filter(
+            userchatparticipant__user=target_user
+        ).first()
+        
+        if chat:
+            participants = UserChatParticipant.objects.filter(
+                chat=chat,
+            )
+
+            user_participant = participants.filter(user=request.user).first()
+            target_participant = participants.filter(user=target_user).first()
+
+            # If the chat is blocked by a user that is not the current user, then return 400
+            if target_user.chat_blocked or target_participant.chat_blocked:
+                return False, {'error': 'Chat is blocked by the other user.'}
+            
+            if user_participant.chat_blocked:
+                user_participant.chat_blocked = False
+                user_participant.last_blocked_at = datetime.now(timezone.utc)
+                user_participant.chat_deleted = False
+                user_participant.last_deleted_at = datetime.now(timezone.utc)
+                target_participant.last_read_at = datetime.now(timezone.utc)
+                user_participant.save()
+
+                return True, {'id': str(chat.id)}
+
+            if user_participant.chat_deleted:
+                user_participant.chat_deleted = False
+                user_participant.last_deleted_at = datetime.now(timezone.utc)
+                target_participant.last_read_at = datetime.now(timezone.utc)
+                user_participant.save()
+
+                return True, {'id': str(chat.id)}
+
+            return False, {'error': 'Chat is already enabled.'}
+
+        chat = UserChat.objects.create()
+        UserChatParticipant.objects.bulk_create([
+            UserChatParticipant(user=request.user, chat=chat),
+            UserChatParticipant(user=target_user, chat=chat)
+        ])
+
+        return True, {'id': str(chat.id)}
+
     
 class UserChatSerializerService:
     @staticmethod
@@ -942,6 +1093,29 @@ class InquirySerializerService:
                 },
                 'language': {
                     'fields': ['name']
+                }
+            }
+        )
+    
+class PostCommentSerializerService:
+    @staticmethod
+    def serialize_comments(request, comments):
+        return PostCommentSerializer(
+            comments,
+            fields_exclude=['liked'] if not request.user.is_authenticated else [],
+            many=True,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                },
+                'post': {
+                    'fields': ('id', 'title', 'team_data', 'user_data')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
                 }
             }
         )

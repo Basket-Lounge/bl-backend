@@ -11,22 +11,28 @@ from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
 import pytz
 
 from games.models import Game, LineScore
-from games.serializers import GameSerializer, LineScoreSerializer
+from games.serializers import GameSerializer, LineScoreSerializer, PlayerCareerStatisticsSerializer, PlayerStatisticsSerializer
+from games.services import combine_games_and_linescores
 from players.models import Player, PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
+from teams.forms import TeamPostCommentForm, TeamPostForm
 from teams.models import (
     Post, 
     PostComment, 
     PostCommentLike, 
-    PostCommentReply, 
-    PostLike, 
+    PostCommentReply,
+    PostCommentStatus,
+    PostCommentStatusDisplayName, 
+    PostLike,
+    PostStatus, 
     PostStatusDisplayName, 
     Team,
     TeamLike, 
     TeamName
 )
-from teams.serializers import TeamSerializer
+from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.utils import calculate_time
+from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostSerializer, PostUpdateSerializer
 from users.services import create_post_queryset_without_prefetch_for_user
 
 
@@ -568,7 +574,135 @@ class TeamService:
             teamlike__user=user
         ).order_by('symbol').only('id', 'symbol')
     
+    @staticmethod
+    def get_all_teams():
+        return Team.objects.prefetch_related(
+            Prefetch(
+                'teamname_set',
+                queryset=TeamName.objects.select_related(
+                    'language'
+                )
+            )
+        ).order_by('symbol')
+    
+    @staticmethod
+    def get_and_serialize_team_last_n_games(team_id, n=5):
+        games_data, linescores_data = get_last_n_games_log(team_id, n)
+        return combine_games_and_linescores(games_data, linescores_data)
+    
+    @staticmethod
+    def get_all_games(team_id):
+        all_team_names = TeamName.objects.select_related('language').all()
+        return Game.objects.select_related(
+            'home_team', 'visitor_team'
+        ).prefetch_related(
+            Prefetch(
+                'line_scores',
+                queryset=LineScore.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=all_team_names
+                    )
+                )
+            ),
+            Prefetch(
+                'home_team__teamname_set',
+                queryset=all_team_names
+            ),
+            Prefetch(
+                'visitor_team__teamname_set',
+                queryset=all_team_names
+            )
+        ).filter(
+            Q(home_team__id=team_id) | Q(visitor_team__id=team_id)
+        ).order_by('game_date_est')
+    
+    @staticmethod
+    def update_user_favorite_teams(request):
+        user = request.user
+        data = request.data
+
+        count_favorite_teams = 0
+        favorite_team_id = None
+        for team in data:
+            if 'favorite' in team and team['favorite']:
+                count_favorite_teams += 1
+                favorite_team_id = team['id']
+            
+            if count_favorite_teams > 1:
+                return False, {'error': 'Only one favorite team allowed'}
+
+        team_ids = [team['id'] for team in data]
+        teams = Team.objects.filter(id__in=team_ids)
+
+        TeamLike.objects.filter(user=user).delete()
+        TeamLike.objects.bulk_create([
+            TeamLike(user=user, team=team) if favorite_team_id != team.id else TeamLike(user=user, team=team, favorite=True)
+            for team in teams
+        ])
+
+        return True, None
+    
+    @staticmethod
+    def add_user_favorite_team(request, team_id):
+        user = request.user
+        TeamLike.objects.get_or_create(
+            user=user, 
+            team=Team.objects.get(id=team_id)
+        )
+        
+        return Team.objects.filter(id=team_id).annotate(
+            liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
+        ).first()
+    
+    @staticmethod
+    def remove_user_favorite_team(request, team_id):
+        user = request.user
+        try:
+            TeamLike.objects.get(user=user, team__id=team_id).delete()
+        except TeamLike.DoesNotExist:
+            pass
+        
+        return Team.objects.filter(id=team_id).annotate(
+            liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
+        )
+
+    
 class TeamSerializerService:
+    @staticmethod
+    def serialize_team(request, team: Team):
+        fields_exclude = []
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
+
+        return TeamSerializer(
+            team,
+            fields_exclude=fields_exclude,
+            context={
+                'teamname': {
+                    'fields': ['name', 'language'],
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    def serialize_team_without_likes_count_and_liked(teams):
+        return TeamSerializer(
+            teams,
+            many=True,
+            fields_exclude=['likes_count', 'liked'],
+            context={
+                'teamname': {
+                    'fields': ['name', 'language'],
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+
     @staticmethod
     def serialize_teams_with_user_favorite(teams, user):
         serializer = TeamSerializer(
@@ -593,9 +727,148 @@ class TeamSerializerService:
                     break
 
         return serializer.data
+    
+    @staticmethod
+    def serialize_team_without_teamname(team):
+        return TeamSerializer(
+            team,
+            fields_exclude=['teamname_set'],
+        )
+    
+    @staticmethod
+    def serialize_all_games(games):
+        return GameSerializer(
+            games,
+            many=True,
+            fields_exclude=[
+                'home_team_statistics',
+                'visitor_team_statistics',
+                'home_team_player_statistics',
+                'visitor_team_player_statistics'
+            ],
+            context={
+                'linescore': {
+                    'fields_exclude': ['id', 'game']
+                },
+                'team': {
+                    'fields': ['id', 'symbol', 'teamname_set']
+                },
+                'teamname': {
+                    'fields': ['name', 'language']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
 
+class TeamPlayerService:
+    def get_team_players(team_id):
+        try:
+            Team.objects.get(id=team_id)
+        except Team.DoesNotExist:
+            raise ValueError('Invalid team_id')
+
+        return Player.objects.filter(
+            team__id=team_id
+        ).prefetch_related('team__teamname_set')
+    
+    def get_team_player_career_stats(team_id, player_id):
+        players = TeamPlayerService.get_team_players(team_id)
+        for player in players:
+            if player.id == int(player_id):
+                return get_player_career_stats(player_id)
+            
+        return PlayerCareerStatistics.objects.none()
+    
+    def get_team_player_with_season_stats(player_id):
+        return Player.objects.filter(id=player_id).prefetch_related(
+            'playerstatistics_set'
+        ).first()
+    
+    def get_team_player_last_n_games_log(player_id, n=5):
+        return get_player_last_n_games_log(player_id, n)
+    
+class TeamPlayerSerializerService:
+    def serialize_players(players):
+        return PlayerSerializer(
+            players,
+            fields_exclude=['season_stats'],
+            many=True,
+            context={
+                'team': {
+                    'fields': ('id', 'symbol', 'teamname_set')
+                },
+                'teamname': {
+                    'fields': ('name', 'language')
+                },
+                'language': {
+                    'fields': ('name',)
+                }
+            }
+        )
+    
+    def serialize_player_career_stats(stats):
+        return PlayerCareerStatisticsSerializer(
+            stats,
+            many=True,
+            fields_exclude=['player', 'team'],
+            context={
+                'team': {
+                    'fields': ('id', 'symbol', 'teamname_set')
+                },
+                'teamname': {
+                    'fields': ('name', 'language')
+                },
+                'language': {
+                    'fields': ('name',)
+                }
+            }
+        )
+    
+    def serialize_player_for_season_stats(player):
+        return PlayerSerializer(
+            player,
+            fields=['season_stats'],
+        )
+    
+    def serialize_player_games_stats(stats):
+        return PlayerStatisticsSerializer(
+            stats,
+            many=True,
+            context={
+                'player': {
+                    'fields': ['id', 'first_name', 'last_name']
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'game': {
+                    'fields': ('visitor_team', 'home_team'),
+                },
+            }
+        )
 
 class TeamViewService:
+    @staticmethod
+    def get_team(request, pk):
+        team = Team.objects.prefetch_related(
+            Prefetch(
+                'teamname_set',
+                queryset=TeamName.objects.select_related(
+                    'language'
+                ).only('name', 'language__name'),
+            )
+        ).filter(id=pk)
+
+        if request.user.is_authenticated:
+            team = team.annotate(
+                liked=Exists(TeamLike.objects.filter(user=request.user, team=OuterRef('pk')))
+            )
+
+        return team.first()
+        
     @staticmethod
     def get_10_popular_posts(request):
         posts = Post.objects.annotate(
@@ -834,3 +1107,584 @@ class TeamViewService:
             )
             
         return comment.first()
+    
+
+class PostService:
+    @staticmethod
+    def get_all_statuses():
+        return PostStatus.objects.all()
+    
+    @staticmethod
+    def get_statuses_for_post_creation():
+        return PostStatus.objects.exclude(name='deleted').prefetch_related(
+            Prefetch(
+                'poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            )
+        )
+    
+    @staticmethod
+    def get_comment_statuses():
+        return PostCommentStatus.objects.prefetch_related(
+            Prefetch(
+                'postcommentstatusdisplayname_set',
+                queryset=PostCommentStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            )
+        )
+    
+    @staticmethod
+    def create_post(request, pk):
+        form = TeamPostForm(request.data)
+        if not form.is_valid():
+            return False, form.errors.as_data()
+        
+        user = request.user
+        data = form.cleaned_data
+
+        try:
+            team = Team.objects.get(id=pk)
+        except Team.DoesNotExist:
+            return False, 'Invalid team_id'
+        
+        Post.objects.create(
+            user=user,
+            team=team,
+            status=data['status'],
+            title=data['title'],
+            content=data['content']
+        )
+
+        return True, None
+    
+    @staticmethod
+    def get_team_posts(request, pk):
+        posts = create_post_queryset_without_prefetch_for_user(
+            request,
+            fields_only=[
+                'id', 
+                'title', 
+                'created_at', 
+                'updated_at', 
+                'user__id', 
+                'user__username', 
+                'team__id', 
+                'team__symbol', 
+                'status__id', 
+                'status__name'
+            ],
+            team__id=pk
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            'postlike_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts
+
+    @staticmethod
+    def get_post(request, pk, post_id):
+        post = Post.objects.select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            'postlike_set',
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            )
+        ).only(
+            'id', 
+            'title', 
+            'content', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id',
+            'status__name'
+        ).filter(
+            team__id=pk,
+            id=post_id
+        )
+
+        if request.user.is_authenticated:
+            post = post.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return post.first()
+
+    @staticmethod
+    def get_post_after_creating_like(request, team_id, post_id):
+        post =  Post.objects.filter(
+            team__id=team_id,
+            id=post_id
+        ).only(
+            'id'
+        )
+
+        if request.user.is_authenticated:
+            post = post.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return post.first()
+
+    @staticmethod
+    def get_comments(request, pk, post_id):
+        query = create_comment_queryset_without_prefetch_for_post(
+            request,
+            fields_only=[
+                'id',
+                'content',
+                'created_at',
+                'updated_at',
+                'user__id',
+                'user__username',
+                'status__id',
+                'status__name'
+            ],
+            post__team__id=pk,
+            post__id=post_id
+        ).select_related(
+            'user',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.only('id')
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.only('id')
+            ),
+        )
+
+        if request.user.is_authenticated:
+            query = query.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+
+        return query
+    
+    @staticmethod
+    def get_comment(request, pk, post_id, comment_id):
+        comment = PostComment.objects.select_related(
+            'user',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postcommentlike_set',
+                queryset=PostCommentLike.objects.only('id')
+            ),
+            Prefetch(
+                'postcommentreply_set',
+                queryset=PostCommentReply.objects.only('id')
+            ),
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name'
+        ).filter(
+            post__team__id=pk,
+            post__id=post_id,
+            id=comment_id
+        )
+
+        if request.user.is_authenticated:
+            comment = comment.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+            
+        return comment.first()
+    
+    @staticmethod
+    def get_10_popular_posts(request):
+        posts = Post.objects.annotate(
+            likes_count=Count('postlike'),
+        ).order_by(
+            '-likes_count'
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            Prefetch(
+                'postlike_set',
+                queryset=PostLike.objects.all()
+            ),
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        )
+        # ).filter(
+        #     created_at__gte=datetime.now() - timedelta(hours=24)
+        # )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts[:10]
+    
+    @staticmethod
+    def get_team_10_popular_posts(request, pk):
+        posts = Post.objects.annotate(
+            likes_count=Count('postlike'),
+        ).filter(
+            team__id=pk
+        ).order_by(
+            '-likes_count'
+        ).select_related(
+            'user',
+            'team',
+            'status'
+        ).prefetch_related(
+            'postlike_set',
+            'postcomment_set',
+            Prefetch(
+                'status__poststatusdisplayname_set',
+                queryset=PostStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+        ).only(
+            'id', 
+            'title', 
+            'created_at', 
+            'updated_at', 
+            'user__id', 
+            'user__username', 
+            'team__id', 
+            'team__symbol', 
+            'status__id', 
+            'status__name'
+        )
+        # ).filter(
+        #     created_at__gte=datetime.now() - timedelta(hours=24)
+        # )
+
+        if request.user.is_authenticated:
+            posts = posts.annotate(
+                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
+            )
+
+        return posts[:10]
+    
+    @staticmethod
+    def update_post(request, post):
+        serializer = PostUpdateSerializer(post, data=request.data, partial=True) 
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+    @staticmethod
+    def create_comment(request, post):
+        form = TeamPostCommentForm(request.data)
+        if not form.is_valid():
+            return False, form.errors.as_data()
+        
+        user = request.user
+        data = form.cleaned_data
+
+        PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.get_created_role(),
+            content=data['content']
+        )
+
+        return True, None
+    
+    @staticmethod
+    def update_comment(request, comment):
+        form = TeamPostCommentForm(request.data)
+        if not form.is_valid():
+            return False, form.errors.as_data()
+        
+        data = form.cleaned_data
+        comment.content = data['content']
+        comment.save()
+
+        return True, None
+    
+    @staticmethod
+    def get_comment_with_likes_only(request, pk, post_id, comment_id):
+        comment = PostComment.objects.filter(
+            post__team__id=pk,
+            post__id=post_id,
+            id=comment_id
+        ).only('id')
+
+        if request.user.is_authenticated:
+            comment = comment.annotate(
+                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+            )
+
+        return comment.first()
+
+    @staticmethod
+    def like_comment(request, pk, post_id, comment):
+        user = request.user
+        PostCommentLike.objects.get_or_create(
+            user=user,
+            post_comment=comment
+        )
+
+        return PostService.get_comment_with_likes_only(request, pk, post_id, comment.id)
+    
+    @staticmethod
+    def unlike_comment(request, pk, post_id, comment_id):
+        user = request.user
+        try:
+            like = PostCommentLike.objects.get(user=user, post_comment__id=comment_id)
+            like.delete()
+        except PostCommentLike.DoesNotExist:
+            pass
+
+        return PostService.get_comment_with_likes_only(request, pk, post_id, comment_id)
+    
+    @staticmethod
+    def create_comment_reply(request, comment):
+        form = TeamPostCommentForm(request.data)
+        if not form.is_valid():
+            return False, form.errors.as_data()
+        
+        user = request.user
+        data = form.cleaned_data
+
+        PostCommentReply.objects.create(
+            user=user,
+            post_comment=comment,
+            content=data['content']
+        )
+
+        return True, None
+    
+    @staticmethod
+    def get_comment_replies(comment_id):
+        return PostCommentReply.objects.filter(
+            post_comment__id=comment_id
+        ).select_related(
+            'user',
+            'status'
+        ).only(
+            'id',
+            'content',
+            'created_at',
+            'updated_at',
+            'user__id',
+            'user__username',
+            'status__id',
+            'status__name'
+        ).order_by('-created_at')
+
+
+class PostSerializerService:
+    @staticmethod
+    def serialize_post_statuses(statuses):
+        return PostStatusSerializer(
+            statuses, 
+            many=True,
+            context={
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_post_comment_statuses(statuses):
+        return PostCommentStatusSerializer(
+            statuses, 
+            many=True,
+            context={
+                'postcommentstatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_posts(request, posts):
+        fields_exclude = ['content']
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
+
+        return PostSerializer(
+            posts,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_post(request, post):
+        fields_exclude = []
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
+
+        return PostSerializer(
+            post,
+            fields_exclude=fields_exclude,
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_post_after_like(request, post):
+        fields = ['id', 'likes_count']
+        if request.user.is_authenticated:
+            fields.append('liked')
+
+        return PostSerializer(
+            post,
+            fields=fields,
+        )
+    
+    @staticmethod
+    def serialize_comments_for_post(request, comments):
+        fields_exclude = ['post_data']
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
+
+        return PostCommentSerializer(
+            comments,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_comment(request, comment):
+        fields_exclude = ['post_data']
+        if not request.user.is_authenticated:
+            fields_exclude.append('liked')
+
+        return PostCommentSerializer(
+            comment,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_comment_with_likes_only(request, comment):
+        fields = ['id', 'likes_count'] 
+        if request.user.is_authenticated:
+            fields.append('liked')
+
+        return PostCommentSerializer(
+            comment,
+            fields=fields
+        )
+
+    @staticmethod
+    def serialize_comment_after_like(comment):
+        return PostCommentSerializer(
+            comment,
+            fields=['id', 'likes_count', 'liked']
+        )
+    
+    @staticmethod
+    def serialize_comment_replies(replies):
+        return PostCommentReplySerializer(
+            replies,
+            many=True,
+            fields_exclude=['post_comment_data'],
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                }
+            }
+        )
