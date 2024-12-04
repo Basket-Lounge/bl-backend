@@ -31,3 +31,7 @@ app.conf.task_queues = (
     Queue('low_priority', routing_key='low_priority'),
     Queue('today_game_update', routing_key='today_game_update'),
 )
+
+app.conf.task_routes = {
+    'management.tasks.broadcast_inquiry_updates_to_all_parties': {'queue': 'high_priority'},
+}
