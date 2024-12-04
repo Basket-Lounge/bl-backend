@@ -818,6 +818,28 @@ class UserChatSerializerService:
                 }
             }
         )
+    
+    @staticmethod
+    def serialize_chats_without_unread_count(chats):
+        return UserChatSerializer(
+            chats,
+            many=True,
+            fields=['id', 'participants'],
+            context={
+                'userchatparticipant': {
+                    'fields': [
+                        'user_data', 
+                        'last_message', 
+                    ]
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
 
     @staticmethod
     def serialize_chat(chat: UserChat, user_participant: UserChatParticipant):
@@ -847,6 +869,30 @@ class UserChatSerializerService:
                 }
             }
         )
+    
+    @staticmethod
+    def serialize_chat_with_entire_log(chat):
+        return UserChatSerializer(
+            chat,
+            fields=[
+                'id', 
+                'participants', 
+                'created_at', 
+                'updated_at'
+            ],
+            context={
+                'userchatparticipant': {
+                    'fields': ['user_data', 'messages']
+                },
+                'userchatparticipantmessage': {
+                    'fields_exclude': ['sender_data', 'user_data'],
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
 
     @staticmethod
     def serialize_chat_for_update(chat : UserChat):
@@ -1103,6 +1149,28 @@ class PostCommentSerializerService:
         return PostCommentSerializer(
             comments,
             fields_exclude=['liked'] if not request.user.is_authenticated else [],
+            many=True,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'status': {
+                    'fields': ('id', 'name')
+                },
+                'post': {
+                    'fields': ('id', 'title', 'team_data', 'user_data')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_comments_without_liked(comments):
+        return PostCommentSerializer(
+            comments,
+            fields_exclude=['liked'],
             many=True,
             context={
                 'user': {

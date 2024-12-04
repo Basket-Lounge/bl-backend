@@ -2,7 +2,6 @@ from datetime import timedelta, datetime
 import re
 from typing import List
 
-from django.conf import settings
 from django.db.models import Q, Prefetch, Count, Exists, OuterRef
 
 from nba_api.stats.endpoints.franchisehistory import FranchiseHistory
@@ -32,7 +31,7 @@ from teams.models import (
 )
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.utils import calculate_time
-from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostSerializer, PostUpdateSerializer
+from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostCommentUpdateSerializer, PostSerializer, PostUpdateSerializer
 from users.services import create_post_queryset_without_prefetch_for_user
 
 
@@ -567,6 +566,24 @@ def create_comment_queryset_without_prefetch_for_post(
 
 class TeamService:
     @staticmethod
+    def get_team(request, pk):
+        team = Team.objects.prefetch_related(
+            Prefetch(
+                'teamname_set',
+                queryset=TeamName.objects.select_related(
+                    'language'
+                ).only('name', 'language__name'),
+            )
+        ).filter(id=pk)
+
+        if request.user.is_authenticated:
+            team = team.annotate(
+                liked=Exists(TeamLike.objects.filter(user=request.user, team=OuterRef('pk')))
+            )
+
+        return team.first()
+
+    @staticmethod
     def get_team_with_user_like(user):
         return Team.objects.prefetch_related(
             'teamname_set'
@@ -849,265 +866,6 @@ class TeamPlayerSerializerService:
                 },
             }
         )
-
-class TeamViewService:
-    @staticmethod
-    def get_team(request, pk):
-        team = Team.objects.prefetch_related(
-            Prefetch(
-                'teamname_set',
-                queryset=TeamName.objects.select_related(
-                    'language'
-                ).only('name', 'language__name'),
-            )
-        ).filter(id=pk)
-
-        if request.user.is_authenticated:
-            team = team.annotate(
-                liked=Exists(TeamLike.objects.filter(user=request.user, team=OuterRef('pk')))
-            )
-
-        return team.first()
-        
-    @staticmethod
-    def get_10_popular_posts(request):
-        posts = Post.objects.annotate(
-            likes_count=Count('postlike'),
-        ).order_by(
-            '-likes_count'
-        ).select_related(
-            'user',
-            'team',
-            'status'
-        ).prefetch_related(
-            Prefetch(
-                'postlike_set',
-                queryset=PostLike.objects.all()
-            ),
-            'postcomment_set',
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                ).all()
-            ),
-        ).only(
-            'id', 
-            'title', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id', 
-            'status__name'
-        )
-        # ).filter(
-        #     created_at__gte=datetime.now() - timedelta(hours=24)
-        # )
-
-        if request.user.is_authenticated:
-            posts = posts.annotate(
-                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
-
-        return posts[:10]
-    
-    @staticmethod
-    def get_team_10_popular_posts(request, pk):
-        posts = Post.objects.annotate(
-            likes_count=Count('postlike'),
-        ).filter(
-            team__id=pk
-        ).order_by(
-            '-likes_count'
-        ).select_related(
-            'user',
-            'team',
-            'status'
-        ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                )
-            ),
-        ).only(
-            'id', 
-            'title', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id', 
-            'status__name'
-        )
-        # ).filter(
-        #     created_at__gte=datetime.now() - timedelta(hours=24)
-        # )
-
-        if request.user.is_authenticated:
-            posts = posts.annotate(
-                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
-
-        return posts[:10]
-    
-    @staticmethod
-    def get_team_posts(request, pk):
-        posts = create_post_queryset_without_prefetch_for_user(
-            request,
-            fields_only=[
-                'id', 
-                'title', 
-                'created_at', 
-                'updated_at', 
-                'user__id', 
-                'user__username', 
-                'team__id', 
-                'team__symbol', 
-                'status__id', 
-                'status__name'
-            ],
-            team__id=pk
-        ).select_related(
-            'user',
-            'team',
-            'status'
-        ).prefetch_related(
-            'postlike_set',
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                )
-            ),
-        )
-
-        if request.user.is_authenticated:
-            posts = posts.annotate(
-                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
-
-        return posts
-
-    @staticmethod
-    def get_post(request, pk, post_id):
-        post = Post.objects.select_related(
-            'user',
-            'team',
-            'status'
-        ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
-            Prefetch(
-                'status__poststatusdisplayname_set',
-                queryset=PostStatusDisplayName.objects.select_related(
-                    'language'
-                )
-            )
-        ).only(
-            'id', 
-            'title', 
-            'content', 
-            'created_at', 
-            'updated_at', 
-            'user__id', 
-            'user__username', 
-            'team__id', 
-            'team__symbol', 
-            'status__id',
-            'status__name'
-        ).filter(
-            team__id=pk,
-            id=post_id
-        )
-
-        if request.user.is_authenticated:
-            post = post.annotate(
-                liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
-
-        return post.first()
-
-    @staticmethod
-    def get_comments(request, pk, post_id):
-        query = create_comment_queryset_without_prefetch_for_post(
-            request,
-            fields_only=[
-                'id',
-                'content',
-                'created_at',
-                'updated_at',
-                'user__id',
-                'user__username',
-                'status__id',
-                'status__name'
-            ],
-            post__team__id=pk,
-            post__id=post_id
-        ).select_related(
-            'user',
-            'status'
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.only('id')
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.only('id')
-            ),
-        )
-
-        if request.user.is_authenticated:
-            query = query.annotate(
-                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
-            )
-
-        return query
-    
-    @staticmethod
-    def get_comment(request, pk, post_id, comment_id):
-        comment = PostComment.objects.select_related(
-            'user',
-            'status'
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.only('id')
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.only('id')
-            ),
-        ).only(
-            'id',
-            'content',
-            'created_at',
-            'updated_at',
-            'user__id',
-            'user__username',
-            'status__id',
-            'status__name'
-        ).filter(
-            post__team__id=pk,
-            post__id=post_id,
-            id=comment_id
-        )
-
-        if request.user.is_authenticated:
-            comment = comment.annotate(
-                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
-            )
-            
-        return comment.first()
-    
 
 class PostService:
     @staticmethod
@@ -1422,6 +1180,16 @@ class PostService:
         serializer.save()
 
     @staticmethod
+    def delete_post(user_id, post_id):
+        post = Post.objects.filter(user__id=user_id, id=post_id).first()
+
+        if not post:
+            return
+        
+        post.status = PostStatus.objects.get(name='deleted')
+        post.save()
+
+    @staticmethod
     def create_comment(request, post):
         form = TeamPostCommentForm(request.data)
         if not form.is_valid():
@@ -1450,6 +1218,26 @@ class PostService:
         comment.save()
 
         return True, None
+    
+    @staticmethod
+    def delete_comment(user_id, comment_id):
+        comment = PostComment.objects.filter(user__id=user_id, id=comment_id).first()
+
+        if not comment:
+            return
+        
+        comment.status = PostCommentStatus.objects.get(name='deleted')
+        comment.save()
+    
+    @staticmethod
+    def update_comment_via_serializer(request, comment):
+        serializer = PostCommentUpdateSerializer(
+            comment,
+            data=request.data,
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
     
     @staticmethod
     def get_comment_with_likes_only(request, pk, post_id, comment_id):
@@ -1560,6 +1348,29 @@ class PostSerializerService:
         if not request.user.is_authenticated:
             fields_exclude.append('liked')
 
+        return PostSerializer(
+            posts,
+            many=True,
+            fields_exclude=fields_exclude,
+            context={
+                'user': {
+                    'fields': ('id', 'username')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
+                },
+                'poststatusdisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_posts_without_liked(posts):
+        fields_exclude = ['content', 'liked']
         return PostSerializer(
             posts,
             many=True,

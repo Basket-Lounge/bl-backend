@@ -23,7 +23,6 @@ from teams.services import (
     TeamPlayerService,
     TeamSerializerService,
     TeamService,
-    TeamViewService,
     get_all_teams_season_stats, 
     get_team_franchise_history,
     get_team_season_stats
@@ -58,7 +57,7 @@ class TeamViewSet(viewsets.ViewSet):
         return [permission() for permission in permission_classes]
 
     def retrieve(self, request, pk=None):
-        team = TeamViewService.get_team(request, pk)
+        team = TeamService.get_team(request, pk)
         if not team:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
 
@@ -339,7 +338,7 @@ class TeamViewSet(viewsets.ViewSet):
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        comments = TeamViewService.get_comments(request, pk, post_id)
+        comments = PostService.get_comments(request, pk, post_id)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
@@ -380,7 +379,7 @@ class TeamViewSet(viewsets.ViewSet):
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        comment = TeamViewService.get_comment(request, team, post_id, comment_id)
+        comment = PostService.get_comment(request, team, post_id, comment_id)
         if not comment:
             return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
 
