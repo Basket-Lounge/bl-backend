@@ -59,7 +59,6 @@ from users.utils import (
 
 class CustomGoogleOAuth2Adapter(GoogleOAuth2Adapter):
     def complete_login(self, request, app, token, response, **kwargs):
-        data = None
         id_token = response.get("id_token")
         if response:
             data = self._decode_id_token(app, id_token)
@@ -151,9 +150,9 @@ class UserViewSet(ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
 
         if request.user.is_authenticated:
-            serializer = UserSerializerService.serialize_user_with_liked(user)
+            serializer = UserSerializerService.serialize_another_user_with_liked(user)
         else:
-            serializer = UserSerializerService.serialize_user(user)
+            serializer = UserSerializerService.serialize_another_user(user)
 
         return Response(serializer.data)
     
@@ -199,6 +198,7 @@ class UserViewSet(ViewSet):
     def post_favorite_team(self, request, team_id):
         team = TeamService.add_user_favorite_team(request, team_id)
         serializer = TeamSerializerService.serialize_team_without_teamname(team)    
+        print(serializer.data)
         return Response(status=HTTP_201_CREATED, data=serializer.data)
     
     @post_favorite_team.mapping.delete

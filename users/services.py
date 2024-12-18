@@ -1,14 +1,27 @@
 from datetime import datetime, timezone
 from typing import List
 from api.websocket import send_message_to_centrifuge
-from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryTypeDisplayName
+from management.models import (
+    Inquiry, 
+    InquiryMessage, 
+    InquiryModerator, 
+    InquiryModeratorMessage, 
+    InquiryTypeDisplayName
+)
 from management.serializers import InquirySerializer
 from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike
 from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 
 from django.db.models import Q, Exists, OuterRef, Prefetch
 
-from users.serializers import PostCommentSerializer, UserChatParticipantMessageCreateSerializer, UserChatParticipantMessageSerializer, UserChatSerializer, UserSerializer, UserUpdateSerializer
+from users.serializers import (
+    PostCommentSerializer, 
+    UserChatParticipantMessageCreateSerializer, 
+    UserChatParticipantMessageSerializer, 
+    UserChatSerializer, 
+    UserSerializer, 
+    UserUpdateSerializer
+)
 
 
 user_queryset_allowed_order_by_fields = (
@@ -483,7 +496,56 @@ class UserSerializerService:
         )
     
     @staticmethod
+    def serialize_another_user(user):
+        return UserSerializer(
+            user,
+            fields=(
+                'id',
+                'username', 
+                'role_data',
+                'level',
+                'introduction',
+                'created_at',
+                'is_profile_visible',
+                'chat_blocked',
+                'likes_count',
+                'favorite_team',
+            ),
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+            }
+        )
+    
+    @staticmethod
     def serialize_user_with_liked(user):
+        fields = [
+            'id',
+            'username',
+            'role_data',
+            'level',
+            'introduction',
+            'created_at',
+            'is_profile_visible',
+            'chat_blocked',
+            'likes_count',
+            'favorite_team',
+            'liked'
+        ]
+
+        return UserSerializer(
+            user,
+            fields=fields,
+            context={
+                'team': {
+                    'fields': ['id', 'symbol']
+                },
+            }
+        )
+    
+    @staticmethod
+    def serialize_another_user_with_liked(user):
         fields = [
             'id',
             'username',
