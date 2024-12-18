@@ -15,7 +15,7 @@ pipeline {
                 script {
                     // Run commands inside the container
                     docker.image('basketlounge-backend:latest').inside {
-                        sh 'python --version'
+                        sh 'python3 --version'
                     }
                 }
             }
