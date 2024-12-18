@@ -3,7 +3,7 @@
 # Bash "strict mode", to help catch problems and bugs in the shell
 # script. Every bash script you write should include this. See
 # http://redsymbol.net/articles/unofficial-bash-strict-mode/ for
-# details.
+# details. Thanks to those who contributed to this code.
 set -euo pipefail
 
 apk -U update
