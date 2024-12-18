@@ -1,0 +1,13 @@
+FROM python:3.10.6-alpine3.16
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV USER_NAME=james
+ENV HOME_DIR=/home/james
+
+WORKDIR /code
+COPY . /code/
+
+RUN ./sys.sh
+
+USER james
+WORKDIR /home/james
