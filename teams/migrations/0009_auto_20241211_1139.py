@@ -136,7 +136,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MEM,
             language=Korean,
-            defaults={'full_name': '멤피스 그리즐리스'}
+            defaults={'name': '멤피스 그리즐리스'}
         )
     except IntegrityError:
         pass
@@ -145,7 +145,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MEM,
             language=English,
-            defaults={'full_name': 'Memphis Grizzlies'}
+            defaults={'name': 'Memphis Grizzlies'}
         )
     except IntegrityError:
         pass
@@ -154,7 +154,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=HOU,
             language=Korean,
-            defaults={'full_name': '휴스턴 로켓츠'}
+            defaults={'name': '휴스턴 로켓츠'}
         )
     except IntegrityError:
         pass
@@ -163,7 +163,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=HOU,
             language=English,
-            defaults={'full_name': 'Houston Rockets'}
+            defaults={'name': 'Houston Rockets'}
         )
     except IntegrityError:
         pass
@@ -172,7 +172,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=NYK,
             language=Korean,
-            defaults={'full_name': '뉴욕 닉스'}
+            defaults={'name': '뉴욕 닉스'}
         )
     except IntegrityError:
         pass
@@ -181,7 +181,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=NYK,
             language=English,
-            defaults={'full_name': 'New York Knicks'}
+            defaults={'name': 'New York Knicks'}
         )
     except IntegrityError:
         pass
@@ -190,7 +190,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=DET,
             language=Korean,
-            defaults={'full_name': '디트로이트 피스톤즈'}
+            defaults={'name': '디트로이트 피스톤즈'}
         )
     except IntegrityError:
         pass
@@ -199,7 +199,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=DET,
             language=English,
-            defaults={'full_name': 'Detroit Pistons'}
+            defaults={'name': 'Detroit Pistons'}
         )
     except IntegrityError:
         pass
@@ -208,7 +208,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=CHA,
             language=Korean,
-            defaults={'full_name': '샬럿 호넷즈'}
+            defaults={'name': '샬럿 호넷즈'}
         )
     except IntegrityError:
         pass
@@ -217,7 +217,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=CHA,
             language=English,
-            defaults={'full_name': 'Charlotte Hornets'}
+            defaults={'name': 'Charlotte Hornets'}
         )
     except IntegrityError:
         pass
@@ -226,7 +226,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MIN,
             language=Korean,
-            defaults={'full_name': '미네소타 팀버울브스'}
+            defaults={'name': '미네소타 팀버울브스'}
         )
     except IntegrityError:
         pass
@@ -235,7 +235,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MIN,
             language=English,
-            defaults={'full_name': 'Minnesota Timberwolves'}
+            defaults={'name': 'Minnesota Timberwolves'}
         )
     except IntegrityError:
         pass
@@ -244,7 +244,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=PHO,
             language=Korean,
-            defaults={'full_name': '피닉스 선즈'}
+            defaults={'name': '피닉스 선즈'}
         )
     except IntegrityError:
         pass
@@ -253,7 +253,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=PHO,
             language=English,
-            defaults={'full_name': 'Phoenix Suns'}
+            defaults={'name': 'Phoenix Suns'}
         )
     except IntegrityError:
         pass
@@ -262,7 +262,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=WAS,
             language=Korean,
-            defaults={'full_name': '워싱턴 위저즈'}
+            defaults={'name': '워싱턴 위저즈'}
         )
     except IntegrityError:
         pass
@@ -271,7 +271,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=WAS,
             language=English,
-            defaults={'full_name': 'Washington Wizards'}
+            defaults={'name': 'Washington Wizards'}
         )
     except IntegrityError:
         pass
@@ -280,7 +280,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=UTA,
             language=Korean,
-            defaults={'full_name': '유타 재즈'}
+            defaults={'name': '유타 재즈'}
         )
     except IntegrityError:
         pass
@@ -289,7 +289,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=UTA,
             language=English,
-            defaults={'full_name': 'Utah Jazz'}
+            defaults={'name': 'Utah Jazz'}
         )
     except IntegrityError:
         pass
@@ -298,7 +298,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=POR,
             language=Korean,
-            defaults={'full_name': '포틀랜드 트레일 블레이저스'}
+            defaults={'name': '포틀랜드 트레일 블레이저스'}
         )
     except IntegrityError:
         pass
@@ -307,7 +307,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=POR,
             language=English,
-            defaults={'full_name': 'Portland Trail Blazers'}
+            defaults={'name': 'Portland Trail Blazers'}
         )
     except IntegrityError:
         pass
@@ -316,7 +316,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=ORL,
             language=Korean,
-            defaults={'full_name': '올랜도 매직'}
+            defaults={'name': '올랜도 매직'}
         )
     except IntegrityError:
         pass
@@ -325,7 +325,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=ORL,
             language=English,
-            defaults={'full_name': 'Orlando Magic'}
+            defaults={'name': 'Orlando Magic'}
         )
     except IntegrityError:
         pass
@@ -334,7 +334,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=TOR,
             language=Korean,
-            defaults={'full_name': '토론토 랩터스'}
+            defaults={'name': '토론토 랩터스'}
         )
     except IntegrityError:
         pass
@@ -343,7 +343,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=TOR,
             language=English,
-            defaults={'full_name': 'Toronto Raptors'}
+            defaults={'name': 'Toronto Raptors'}
         )
     except IntegrityError:
         pass
@@ -352,7 +352,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=CHI,
             language=Korean,
-            defaults={'full_name': '시카고 불스'}
+            defaults={'name': '시카고 불스'}
         )
     except IntegrityError:
         pass
@@ -361,7 +361,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=CHI,
             language=English,
-            defaults={'full_name': 'Chicago Bulls'}
+            defaults={'name': 'Chicago Bulls'}
         )
     except IntegrityError:
         pass
@@ -370,7 +370,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=BKN,
             language=Korean,
-            defaults={'full_name': '브루클린 네츠'}
+            defaults={'name': '브루클린 네츠'}
         )
     except IntegrityError:
         pass
@@ -379,7 +379,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=BKN,
             language=English,
-            defaults={'full_name': 'Brooklyn Nets'}
+            defaults={'name': 'Brooklyn Nets'}
         )
     except IntegrityError:
         pass
@@ -388,7 +388,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=GSW,
             language=Korean,
-            defaults={'full_name': '골든스테이트 워리어스'}
+            defaults={'name': '골든스테이트 워리어스'}
         )
     except IntegrityError:
         pass
@@ -397,7 +397,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=GSW,
             language=English,
-            defaults={'full_name': 'Golden State Warriors'}
+            defaults={'name': 'Golden State Warriors'}
         )
     except IntegrityError:
         pass
@@ -406,7 +406,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=NOP,
             language=Korean,
-            defaults={'full_name': '뉴올리언스 펠리컨스'}
+            defaults={'name': '뉴올리언스 펠리컨스'}
         )
     except IntegrityError:
         pass
@@ -415,7 +415,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=NOP,
             language=English,
-            defaults={'full_name': 'New Orleans Pelicans'}
+            defaults={'name': 'New Orleans Pelicans'}
         )
     except IntegrityError:
         pass
@@ -424,7 +424,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=PHI,
             language=Korean,
-            defaults={'full_name': '필라델피아 세븐티식서스'}
+            defaults={'name': '필라델피아 세븐티식서스'}
         )
     except IntegrityError:
         pass
@@ -433,7 +433,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=PHI,
             language=English,
-            defaults={'full_name': 'Philadelphia 76ers'}
+            defaults={'name': 'Philadelphia 76ers'}
         )
     except IntegrityError:
         pass
@@ -442,7 +442,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=SAC,
             language=Korean,
-            defaults={'full_name': '새크라멘토 킹스'}
+            defaults={'name': '새크라멘토 킹스'}
         )
     except IntegrityError:
         pass
@@ -451,7 +451,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=SAC,
             language=English,
-            defaults={'full_name': 'Sacramento Kings'}
+            defaults={'name': 'Sacramento Kings'}
         )
     except IntegrityError:
         pass
@@ -460,7 +460,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=IND,
             language=Korean,
-            defaults={'full_name': '인디애나 페이서스'}
+            defaults={'name': '인디애나 페이서스'}
         )
     except IntegrityError:
         pass
@@ -469,7 +469,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=IND,
             language=English,
-            defaults={'full_name': 'Indiana Pacers'}
+            defaults={'name': 'Indiana Pacers'}
         )
     except IntegrityError:
         pass
@@ -478,7 +478,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=ATL,
             language=Korean,
-            defaults={'full_name': '애틀랜타 호크스'}
+            defaults={'name': '애틀랜타 호크스'}
         )
     except IntegrityError:
         pass
@@ -487,7 +487,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=ATL,
             language=English,
-            defaults={'full_name': 'Atlanta Hawks'}
+            defaults={'name': 'Atlanta Hawks'}
         )
     except IntegrityError:
         pass
@@ -496,7 +496,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=LAC,
             language=Korean,
-            defaults={'full_name': '로스앤젤레스 클리퍼스'}
+            defaults={'name': '로스앤젤레스 클리퍼스'}
         )
     except IntegrityError:
         pass
@@ -505,7 +505,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=LAC,
             language=English,
-            defaults={'full_name': 'Los Angeles Clippers'}
+            defaults={'name': 'Los Angeles Clippers'}
         )
     except IntegrityError:
         pass
@@ -514,7 +514,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=DEN,
             language=Korean,
-            defaults={'full_name': '덴버 너기츠'}
+            defaults={'name': '덴버 너기츠'}
         )
     except IntegrityError:
         pass
@@ -523,7 +523,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=DEN,
             language=English,
-            defaults={'full_name': 'Denver Nuggets'}
+            defaults={'name': 'Denver Nuggets'}
         )
     except IntegrityError:
         pass
@@ -532,7 +532,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=OKC,
             language=Korean,
-            defaults={'full_name': '오클라호마시티 썬더'}
+            defaults={'name': '오클라호마시티 썬더'}
         )
     except IntegrityError:
         pass
@@ -541,7 +541,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=OKC,
             language=English,
-            defaults={'full_name': 'Oklahoma City Thunder'}
+            defaults={'name': 'Oklahoma City Thunder'}
         )
     except IntegrityError:
         pass
@@ -550,7 +550,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=BOS,
             language=Korean,
-            defaults={'full_name': '보스턴 셀틱스'}
+            defaults={'name': '보스턴 셀틱스'}
         )
     except IntegrityError:
         pass
@@ -559,7 +559,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=BOS,
             language=English,
-            defaults={'full_name': 'Boston Celtics'}
+            defaults={'name': 'Boston Celtics'}
         )
     except IntegrityError:
         pass
@@ -568,7 +568,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MIL,
             language=Korean,
-            defaults={'full_name': '밀워키 버크스'}
+            defaults={'name': '밀워키 버크스'}
         )
     except IntegrityError:
         pass
@@ -577,7 +577,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MIL,
             language=English,
-            defaults={'full_name': 'Milwaukee Bucks'}
+            defaults={'name': 'Milwaukee Bucks'}
         )
     except IntegrityError:
         pass
@@ -586,7 +586,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MIA,
             language=Korean,
-            defaults={'full_name': '마이애미 히트'}
+            defaults={'name': '마이애미 히트'}
         )
     except IntegrityError:
         pass
@@ -595,7 +595,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=MIA,
             language=English,
-            defaults={'full_name': 'Miami Heat'}
+            defaults={'name': 'Miami Heat'}
         )
     except IntegrityError:
         pass
@@ -604,7 +604,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=CAV,
             language=Korean,
-            defaults={'full_name': '클리블랜드 캐벌리어스'}
+            defaults={'name': '클리블랜드 캐벌리어스'}
         )
     except IntegrityError:
         pass
@@ -613,7 +613,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=CAV,
             language=English,
-            defaults={'full_name': 'Cleveland Cavaliers'}
+            defaults={'name': 'Cleveland Cavaliers'}
         )
     except IntegrityError:
         pass
@@ -622,7 +622,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=LAL,
             language=Korean,
-            defaults={'full_name': '로스앤젤레스 레이커스'}
+            defaults={'name': '로스앤젤레스 레이커스'}
         )
     except IntegrityError:
         pass
@@ -631,7 +631,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=LAL,
             language=English,
-            defaults={'full_name': 'Los Angeles Lakers'}
+            defaults={'name': 'Los Angeles Lakers'}
         )
     except IntegrityError:
         pass
@@ -640,7 +640,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=DAL,
             language=Korean,
-            defaults={'full_name': '댈러스 매버릭스'}
+            defaults={'name': '댈러스 매버릭스'}
         )
     except IntegrityError:
         pass
@@ -649,7 +649,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=DAL,
             language=English,
-            defaults={'full_name': 'Dallas Mavericks'}
+            defaults={'name': 'Dallas Mavericks'}
         )
     except IntegrityError:
         pass
@@ -658,7 +658,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=SAS,
             language=Korean,
-            defaults={'full_name': '샌안토니오 스퍼스'}
+            defaults={'name': '샌안토니오 스퍼스'}
         )
     except IntegrityError:
         pass
@@ -667,7 +667,7 @@ def create_teams(apps, schema_editor):
         TeamName.objects.update_or_create(
             team=SAS,
             language=English,
-            defaults={'full_name': 'San Antonio Spurs'}
+            defaults={'name': 'San Antonio Spurs'}
         )
     except IntegrityError:
         pass

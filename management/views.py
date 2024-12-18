@@ -331,7 +331,7 @@ class ReportAdminViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
-        reports = ReportService.get_reports()
+        reports = ReportService.get_reports(request)
         pagination = CustomPageNumberPagination()
         reports = pagination.paginate_queryset(reports, request)
 

@@ -406,8 +406,8 @@ def register_games_for_the_current_season():
     # extract data from the certain date to certain date
     # save the data to the database
 
-    starting_date = datetime(2024, 10, 22)
-    ending_date = datetime(2025, 4, 13)
+    starting_date = datetime(2024, 12, 16)
+    ending_date = datetime(2024, 12, 21)
 
     current_date = starting_date
     
@@ -448,6 +448,11 @@ def register_games_for_the_current_season():
                 datetime_obj = datetime_obj.replace(hour=hour, minute=minute, tzinfo=timezone)
             except IndexError:
                 pass 
+
+
+            if Game.objects.filter(game_id=game_data['GAME_ID']).exists():
+                print(f"Game {game_data['GAME_ID']} already exists")
+                continue
 
             game_instance = Game(
                 game_id=game_data['GAME_ID'],
@@ -682,7 +687,7 @@ class TeamService:
         
         return Team.objects.filter(id=team_id).annotate(
             liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
-        )
+        ).first()
 
     
 class TeamSerializerService:

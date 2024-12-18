@@ -44,6 +44,17 @@ userchat_queryset_allowed_order_by_fields = (
     '-userchatparticipant__user__username',
 )
 
+report_queryset_allowed_order_by_fields = (
+    'created_at',
+    '-created_at',
+    'updated_at',
+    '-updated_at',
+    'resolved',
+    '-resolved',
+    'title',
+    '-title',
+)
+
 def send_inquiry_notification_to_all_channels_for_moderators(inquiry: Inquiry) -> None:
     moderator_inquiry_serializer = InquirySerializer(
         inquiry,
@@ -783,6 +794,57 @@ def create_userchat_queryset_without_prefetch(
 
     return queryset
 
+def create_report_queryset_without_prefetch(
+    request, 
+    fields_only=[], 
+    **kwargs
+) -> BaseManager[Report]:
+    """
+    Create a queryset for the Report model without prefetching and selecting related models.\n
+    - request: request object.\n
+    - fields_only: list of fields to return in the queryset.\n
+    - **kwargs: keyword arguments to filter
+    """
+
+    if kwargs is not None:
+        queryset = Report.objects.filter(**kwargs)
+    else:
+        queryset = Report.objects.all()
+
+    search_term = request.query_params.get('search', None)
+    if search_term is not None:
+        queryset = queryset.filter(
+            Q(accused__username__icontains=search_term) | 
+            Q(accuser__username__icontains=search_term)
+        )
+
+    sort_by : str | None = request.query_params.get('sort', None)
+    if sort_by is not None:
+        sort_by : List[str] = sort_by.split(',')
+        unique_sort_by = set(sort_by)
+
+        for field in unique_sort_by:
+            if field not in report_queryset_allowed_order_by_fields:
+                unique_sort_by.remove(field)
+
+        sort_by = list(unique_sort_by)
+
+    if sort_by is not None:
+        queryset = queryset.order_by(*sort_by)
+    else:
+        queryset = queryset.order_by('-created_at')
+
+    resolved = request.query_params.get('resolved', None)
+    if resolved == '1':
+        queryset = queryset.filter(resolved=True)
+    elif resolved == '0':
+        queryset = queryset.filter(resolved=False)
+
+    if fields_only:
+        return queryset.only(*fields_only)
+
+    return queryset
+
 class InquiryService:
     @staticmethod
     def get_inquiry_by_user_id_and_id(user_id: int, inquiry_id) -> Inquiry:
@@ -934,8 +996,12 @@ class InquirySerializerService:
 
 class ReportService:
     @staticmethod
-    def get_reports(**kwargs):
-        reports = Report.objects.select_related(
+    def get_reports(request, **kwargs):
+        return create_report_queryset_without_prefetch(
+            request, 
+            fields_only=[], 
+            **kwargs
+        ).select_related(
             'type'
         ).prefetch_related(
             Prefetch(
@@ -944,12 +1010,7 @@ class ReportService:
                     'language'
                 )
             )
-        ).order_by('-created_at')
-
-        if kwargs:
-            return reports.filter(**kwargs)
-
-        return reports
+        )
     
     @staticmethod
     def get_report(pk):
