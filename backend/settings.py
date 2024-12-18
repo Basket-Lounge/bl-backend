@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from datetime import timedelta
 from pathlib import Path
 from environs import Env
+import sys
 
 from celery.schedules import crontab
 
@@ -32,6 +33,8 @@ SECRET_KEY = env.str('DJANGO_SECRET_KEY')
 DEBUG = True
 
 ALLOWED_HOSTS = []
+
+TESTING = 'test' in sys.argv
 
 
 # Application definition
@@ -116,8 +119,32 @@ DATABASES = {
         'PASSWORD': env.str('DB_PASSWORD'),
         'HOST': env.str('DB_HOST'),
         'PORT': env.str('DB_PORT'),
-    }
+    },
+    'replica1': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': env.str('DB_NAME'),
+        'USER': env.str('DB_USER'),
+        'PASSWORD': env.str('DB_PASSWORD'),
+        'HOST': env.str('DB_HOST_REPLICA1'),
+        'PORT': env.str('DB_PORT_REPLICA1'),
+        "TEST": {
+            "MIRROR": "default",
+        },
+    },
+    'replica2': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': env.str('DB_NAME'),
+        'USER': env.str('DB_USER'),
+        'PASSWORD': env.str('DB_PASSWORD'),
+        'HOST': env.str('DB_HOST_REPLICA2'),
+        'PORT': env.str('DB_PORT_REPLICA2'),
+        "TEST": {
+            "MIRROR": "default",
+        },
+    },
 }
+
+DATABASE_ROUTERS = ["api.database_routers.DBRouter" if not TESTING else "api.database_routers.TestDBRouter"]
 
 
 # Password validation
