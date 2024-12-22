@@ -1,0 +1,35 @@
+services:
+  main-db:
+    image: postgres:17.0-alpine3.20
+    volumes:
+      - /home/user1/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432/tcp"
+    environment:
+      - POSTGRES_PASSWORD=[설정할 패스워드]
+
+  secondary-db:
+    image: postgres:17.0-alpine3.20
+    volumes:
+      - /home/user1/postgres-replication1:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432/tcp"
+    environment:
+      - POSTGRES_PASSWORD=[설정할 패스워드]
+      - POSTGRES_INITDB_SKIP=true
+    depends_on:
+      main-db:
+        condition: service_started
+
+  secondary-db1:
+    image: postgres:17.0-alpine3.20
+    volumes:
+      - /home/user1/postgres-replication2:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5434:5432/tcp"
+    environment:
+      - POSTGRES_PASSWORD=[설정할 패스워드]
+      - POSTGRES_INITDB_SKIP=true
+    depends_on:
+      main-db:
+        condition: service_started
