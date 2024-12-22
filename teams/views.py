@@ -41,6 +41,12 @@ class TeamViewSet(viewsets.ViewSet):
 
         if self.action == 'post_team_post':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'get_team_posts':
+            permission_classes = []
+        elif self.action == 'edit_team_post':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'delete_team_post':
+            permission_classes = [IsAuthenticated]
         elif self.action == 'like_post':
             permission_classes = [IsAuthenticated]
         elif self.action == 'unlike_post':
@@ -52,6 +58,10 @@ class TeamViewSet(viewsets.ViewSet):
         elif self.action == 'like_comment':
             permission_classes = [IsAuthenticated]
         elif self.action == 'unlike_comment':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'reply_comment':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'delete_comment':
             permission_classes = [IsAuthenticated]
 
         return [permission() for permission in permission_classes]
@@ -287,6 +297,12 @@ class TeamViewSet(viewsets.ViewSet):
             status=HTTP_200_OK
         )
 
+    @get_team_post.mapping.delete
+    def delete_team_post(self, request, pk=None, post_id=None):
+        user_id = request.user.id
+        PostService.delete_post(user_id, post_id)
+        return Response(status=HTTP_200_OK)
+
     @action(
         detail=True,
         methods=['post'],
@@ -305,7 +321,7 @@ class TeamViewSet(viewsets.ViewSet):
         )
 
         post = PostService.get_post_after_creating_like(request, pk, post_id)
-        serializer = PostSerializerService.serialize_post_after_like(post)
+        serializer = PostSerializerService.serialize_post_after_like(request, post)
         return Response(serializer.data)
     
     @like_post.mapping.delete
@@ -318,13 +334,13 @@ class TeamViewSet(viewsets.ViewSet):
             pass
 
         post = PostService.get_post_after_creating_like(request, pk, post_id)
-        serializer = PostSerializerService.serialize_post_after_like(post)
+        serializer = PostSerializerService.serialize_post_after_like(request, post)
         return Response(serializer.data)
     
     @like_post.mapping.get
     def get_likes(self, request, pk=None, post_id=None):
         post = PostService.get_post_after_creating_like(request, pk, post_id)
-        serializer = PostSerializerService.serialize_post_after_like(post)
+        serializer = PostSerializerService.serialize_post_after_like(request, post)
         return Response(serializer.data)
 
     @action(
@@ -468,7 +484,7 @@ class TeamViewSet(viewsets.ViewSet):
         if not comment:
             return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
 
-        serializer = PostSerializerService.serialize_comment_with_likes_only(comment) 
+        serializer = PostSerializerService.serialize_comment_with_likes_only(request, comment) 
         return Response(serializer.data)
 
     @action(
