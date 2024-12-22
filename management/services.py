@@ -1187,7 +1187,7 @@ class UserManagementService:
     
     @staticmethod
     def get_user(pk) -> User | None:
-        user = User.objects.filter(id=pk).select_related(
+        return User.objects.filter(id=pk).select_related(
             'role'
         ).prefetch_related(
             Prefetch(
@@ -1372,7 +1372,7 @@ class UserManagementSerializerService:
     
     @staticmethod
     def serialize_user(user : User) -> UserSerializer:
-        serializer = UserSerializer(
+        return UserSerializer(
             user,
             fields=[
                 'id',
