@@ -2,7 +2,7 @@ services:
   main-db:
     image: postgres:17.0-alpine3.20
     volumes:
-      - /home/user1/postgres:/var/lib/postgresql/data
+      - [Main DB 저장 공간]:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432/tcp"
     environment:
@@ -11,7 +11,7 @@ services:
   secondary-db:
     image: postgres:17.0-alpine3.20
     volumes:
-      - /home/user1/postgres-replication1:/var/lib/postgresql/data
+      - [Replica 1 DB 저장 공간]:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5433:5432/tcp"
     environment:
@@ -24,7 +24,7 @@ services:
   secondary-db1:
     image: postgres:17.0-alpine3.20
     volumes:
-      - /home/user1/postgres-replication2:/var/lib/postgresql/data
+      - [Replica 2 DB 저장 공간]:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5434:5432/tcp"
     environment:
