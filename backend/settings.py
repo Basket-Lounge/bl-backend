@@ -13,7 +13,9 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from datetime import timedelta
 from pathlib import Path
 from environs import Env
+from corsheaders.defaults import default_headers
 import sys
+import os
 
 from celery.schedules import crontab
 
@@ -35,7 +37,7 @@ DEBUG = True
 ALLOWED_HOSTS = []
 
 TESTING = 'test' in sys.argv
-
+DEVELOPMENT = os.getenv('DEVELOPMENT', 'False') == 'True'
 
 # Application definition
 
@@ -111,40 +113,49 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env.str('DB_NAME'),
-        'USER': env.str('DB_USER'),
-        'PASSWORD': env.str('DB_PASSWORD'),
-        'HOST': env.str('DB_HOST'),
-        'PORT': env.str('DB_PORT'),
-    },
-    'replica1': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env.str('DB_NAME'),
-        'USER': env.str('DB_USER'),
-        'PASSWORD': env.str('DB_PASSWORD'),
-        'HOST': env.str('DB_HOST_REPLICA1'),
-        'PORT': env.str('DB_PORT_REPLICA1'),
-        "TEST": {
-            "MIRROR": "default",
+if not DEVELOPMENT:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env.str('DB_NAME'),
+            'USER': env.str('DB_USER'),
+            'PASSWORD': env.str('DB_PASSWORD'),
+            'HOST': env.str('DB_HOST'),
+            'PORT': env.str('DB_PORT'),
         },
-    },
-    'replica2': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env.str('DB_NAME'),
-        'USER': env.str('DB_USER'),
-        'PASSWORD': env.str('DB_PASSWORD'),
-        'HOST': env.str('DB_HOST_REPLICA2'),
-        'PORT': env.str('DB_PORT_REPLICA2'),
-        "TEST": {
-            "MIRROR": "default",
+        'replica1': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env.str('DB_NAME'),
+            'USER': env.str('DB_USER'),
+            'PASSWORD': env.str('DB_PASSWORD'),
+            'HOST': env.str('DB_HOST_REPLICA1'),
+            'PORT': env.str('DB_PORT_REPLICA1'),
         },
-    },
-}
+        'replica2': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env.str('DB_NAME'),
+            'USER': env.str('DB_USER'),
+            'PASSWORD': env.str('DB_PASSWORD'),
+            'HOST': env.str('DB_HOST_REPLICA2'),
+            'PORT': env.str('DB_PORT_REPLICA2'),
+        }
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env.str('DB_NAME'),
+            'USER': env.str('DB_USER'),
+            'PASSWORD': env.str('DB_PASSWORD'),
+            'HOST': env.str('DB_HOST'),
+            'PORT': env.str('DB_PORT'),
+        },
+    }
 
-DATABASE_ROUTERS = ["api.database_routers.DBRouter" if not TESTING else "api.database_routers.TestDBRouter"]
+
+DATABASE_ROUTERS = [
+    "api.database_routers.DBRouter" if not DEVELOPMENT and not TESTING else "api.database_routers.TestDBRouter"
+]
 
 
 # Password validation
@@ -203,8 +214,6 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ORIGIN_ALLOW_ALL = False
-
-from corsheaders.defaults import default_headers
 
 CORS_ALLOW_HEADERS = [
     *default_headers,
