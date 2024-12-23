@@ -2,18 +2,28 @@
 
 from django.db import migrations
 
+ROLES = [
+    {'name': 'admin', 'description': 'The highest role', 'weight': 1},
+    {'name': 'site_moderator', 'description': 'Moderator of the site', 'weight': 2},
+    {'name': 'chat_moderator', 'description': 'Moderator of the chat', 'weight': 3},
+    {'name': 'user', 'description': 'Regular user', 'weight': 4},
+    {'name': 'deactivated', 'description': 'Deactivated user', 'weight': 5},
+    {'name': 'banned', 'description': 'Banned user', 'weight': 6},
+]
+
 def create_roles(apps, schema_editor):
     Role = apps.get_model('users', 'Role')
-    Role.objects.create(name='admin', description='The highest role', weight=1)
-    Role.objects.create(name='site_moderator', description='Moderator of the site', weight=2)
-    Role.objects.create(name='chat_moderator', description='Moderator of the chat', weight=3)
-    Role.objects.create(name='user', description='Regular user', weight=4)
-    Role.objects.create(name='deactivated', description='Deactivated user', weight=5)
-    Role.objects.create(name='banned', description='Banned user', weight=6)
+    existing_roles = Role.objects.values_list('name', flat=True)
+    roles_to_create = [role for role in ROLES if role['name'] not in existing_roles]
+
+    if roles_to_create:
+        try:
+            Role.objects.bulk_create([Role(**role) for role in roles_to_create])
+        except Exception as e:
+            raise RuntimeError(f"Error creating roles: {e}")
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ('users', '0002_alter_role_description_alter_role_name_directmessage_and_more'),
     ]
