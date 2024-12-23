@@ -1,27 +1,29 @@
-## 🚩 관련 이슈
+## 🚩 Related Issue
 - close #issue_number
 
-## 📋 변경 사항 (Changes)
-> 변경 사항을 간략하게 설명해주세요. 
-> Ex) 이슈 #1 에 대한 해결, 새로운 기능 추가, 버그 수정 등
+## 📋 Changes Made
+> What changes were made? (Explain at least one line)
+> Ex) Added the login feature, fixed the bug related to the user profile, #issue_number
 
-- [ ] A 기능 구현
-- [ ] B 버그 수정
+- [ ] Feature Added
+- [ ] Bug Fixed
+- [ ] Refactor
+- [ ] Documentation
+- [ ] Other
 
-## ✅ 체크리스트 (Check List)
-> 변경 사항을 리뷰할 때 확인해야 할 사항들을 체크해주세요.
-- [ ] 코드 스타일 가이드 준수
-- [ ] 코멘트 추가
-- [ ] 테스트 코드 작성
-- [ ] 머지 전 머지 충돌 해결
+## ✅ Checklist prior to submitting the pull request
+> Please check if your PR fulfills the following requirements:
+- [ ] Adheres to the [style guide](https://peps.python.org/pep-0008/)
+- [ ] Confirms the changes made in the PR are working as intended
+- [ ] Tests have been added, modified, or deleted
 
-## 🔔 참고 사항 (References)
-> 참고할 이슈, PR, 문서 등이 있다면 링크를 첨부해주세요.
+## 🔔 References
+> If necessary, please provide any additional context below.
 - 
 
-## 📸 결과물 스크린샷 (Screenshots) (선택사항)
-> 변경 사항에 대한 스크린샷을 첨부해주세요.
+## 📸 Screenshots (Optional)
+> If necessary, attach screenshots to help explain the changes made in the PR.
 
-## 💬 리뷰어에게 전달할 내용 (Additional Context)
-> 리뷰어에게 전달할 내용이 있다면 작성해주세요.
+## 💬 Additional Context
+> For any additional information intended for the reviewer, please provide it here.
 - 

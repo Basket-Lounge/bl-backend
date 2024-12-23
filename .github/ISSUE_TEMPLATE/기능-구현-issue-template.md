@@ -1,20 +1,20 @@
 ---
-name: 기능 구현 issue template
-about: 구현하고자 하는 기능에 대한 설명과 작업들 입력
+name: Issue template for the implementation of a feature
+about: Create an issue for the suggestion of a new feature
 title: "[Feature] : "
 labels: ''
 assignees: ''
 
 ---
 
-## ✨ 기능 설명
+## ✨ Feature description
 
-구현할 기능 설명
+Describe the feature you want to implement.
 
-## ✅ 할일
+## ✅ Task(s)
 
-- [ ] 작업 1
-- [ ] 작업 2
-- [ ] 작업 3
+- [ ] Task 1
+- [ ] Task 2
+- [ ] Task 3
 
 ## ETC

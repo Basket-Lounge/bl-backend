@@ -1,22 +1,22 @@
 ---
-name: 버그 issue template
-about: 해결해야 할 버그 입력
-title: "[BUG]"
+name: Bug Issue Template
+about: Create an issue for the bug report
+title: "[BUG] : "
 labels: ''
 assignees: ''
 
 ---
 
-## ✨ 버그 설명
+## ✨ Bug description
 
-버그 설명
+Describe a bug you encountered.
 
-## ✅  예상 해결 방안 
+## ✅ Task(s) to resolve the bug
 
-- [ ] 작업 1
-- [ ] 작업 2
-- [ ] 작업 3
+- [ ] Task 1
+- [ ] Task 2
+- [ ] Task 3
 
-## 📷 스크린 샷
+## 📷 Screenshot(s)
 
 ## ETC
