@@ -46,43 +46,24 @@ class UserTestCase(APITestCase):
         user.username = 'newusername'
         user.save()
 
-        user = User.objects.get(username='newusername')
+        user.refresh_from_db()
         self.assertEqual(user.username, 'newusername')
-
-        user.username = 'testuser'
-        user.save()
-
-        user = User.objects.get(username='testuser')
-        self.assertEqual(user.username, 'testuser')
 
     def test_modify_user_password(self):
         user = User.objects.get(username='testuser')
         user.set_password('newpassword')
         user.save()
 
-        user = User.objects.get(username='testuser')
+        user.refresh_from_db()
         self.assertTrue(user.check_password('newpassword'))
-
-        user.set_password('testpassword')
-        user.save()
-
-        user = User.objects.get(username='testuser')
-        self.assertTrue(user.check_password('testpassword'))
 
     def test_modify_user_role(self):
         user = User.objects.get(username='testuser')
         user.role = Role.get_admin_role()
         user.save()
 
-        user = User.objects.get(username='testuser')
+        user.refresh_from_db()
         self.assertEqual(user.role, Role.get_admin_role())
-
-        user.role = Role.get_regular_user_role()
-        user.save()
-
-        user = User.objects.get(username='testuser')
-        self.assertEqual(user.role, Role.get_regular_user_role())
-
 
 class UserAPIEndpointTestCase(APITestCase):
     def setUp(self):
@@ -211,3 +192,163 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['symbol'], 'TST')
+
+    def test_put_favorite_teams_of_oneself(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        # test an anonymous user
+        client = APIClient()
+        response = client.put(f'/api/users/me/favorite-teams/')
+
+        self.assertEqual(response.status_code, 401)
+
+        # User can't have more than 1 favorite team
+        factory = APIRequestFactory()
+        request = factory.put(
+            f'/api/users/me/favorite-teams/',
+            data=[
+                {'id': 1, 'favorite': True},
+                {'id': 2, 'favorite': True}
+            ],
+            format='json'
+        )
+        force_authenticate(request, user=user)
+        view = UserViewSet.as_view({'put': 'put_favorite_teams'})
+
+        response = view(request)
+        self.assertEqual(response.status_code, 400)
+
+        # User can't favorite a team that doesn't exist
+        request = factory.put(
+            f'/api/users/me/favorite-teams/',
+            data=[
+                {'id': 2, 'favorite': True}
+            ],
+            format='json'
+        )
+
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        user_favorite_teams_count = TeamLike.objects.filter(
+            user__username='testuser'
+        ).count()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(user_favorite_teams_count, 0)
+
+        # User can favorite a team that exists
+        team = Team.objects.all().first()
+
+        request = factory.put(
+            f'/api/users/me/favorite-teams/',
+            data=[
+                {'id': team.id, 'favorite': True}
+            ],
+            format='json'
+        )
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        user_favorite_teams_count = TeamLike.objects.filter(
+            user__username='testuser'
+        ).count()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(user_favorite_teams_count, 1)
+
+        # User can unfavorite a team
+        request = factory.put(
+            f'/api/users/me/favorite-teams/',
+            data=[
+                {'id': team.id, 'favorite': False}
+            ],
+            format='json'
+        )
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        user_favorite_teams_count = TeamLike.objects.filter(
+            user__username='testuser',
+            favorite=False
+        ).count()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(user_favorite_teams_count, 1)
+
+    def test_post_favorite_team(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'post': 'post_favorite_team'})
+        team = Team.objects.all().first()
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/users/me/favorite-teams/{team.id}/',
+        )
+        response = view(request, team_id=team.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        request = factory.post(
+            f'/api/users/me/favorite-teams/{team.id}/',
+        )
+        force_authenticate(request, user=user)
+        response = view(request, team_id=team.id)
+        self.assertEqual(response.status_code, 201)
+
+        user_favorite_teams_count = TeamLike.objects.filter(
+            user__username='testuser'
+        ).count()
+
+        self.assertEqual(user_favorite_teams_count, 1)
+    
+    def test_delete_favorite_team(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'delete': 'delete_favorite_team'})
+        team = Team.objects.all().first()
+
+        # test an anonymous user
+        request = factory.delete(
+            f'/api/users/me/favorite-teams/{team.id}/',
+        )
+        response = view(request, team_id=team.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        request = factory.post(
+            f'/api/users/me/favorite-teams/{team.id}/',
+        )
+        force_authenticate(request, user=user)
+        view = UserViewSet.as_view({'post': 'post_favorite_team'})
+        response = view(request, team_id=team.id)
+
+        user_favorite_teams_count = TeamLike.objects.filter(
+            user__username='testuser'
+        ).count()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(user_favorite_teams_count, 1)
+
+        request = factory.delete(
+            f'/api/users/me/favorite-teams/{team.id}/',
+        )
+        force_authenticate(request, user=user)
+        view = UserViewSet.as_view({'delete': 'delete_favorite_team'})
+        response = view(request, team_id=team.id)
+        self.assertEqual(response.status_code, 200)
+
+        user_favorite_teams_count = TeamLike.objects.filter(
+            user__username='testuser'
+        ).count()
+
+        self.assertEqual(user_favorite_teams_count, 0)

@@ -2,6 +2,7 @@ from datetime import timedelta, datetime
 import re
 from typing import List
 
+from django.db import transaction
 from django.db.models import Q, Prefetch, Count, Exists, OuterRef
 
 from nba_api.stats.endpoints.franchisehistory import FranchiseHistory
@@ -615,6 +616,7 @@ class TeamService:
     @staticmethod
     def get_all_games(team_id):
         all_team_names = TeamName.objects.select_related('language').all()
+
         return Game.objects.select_related(
             'home_team', 'visitor_team'
         ).prefetch_related(
@@ -641,29 +643,30 @@ class TeamService:
     
     @staticmethod
     def update_user_favorite_teams(request):
-        user = request.user
-        data = request.data
+        with transaction.atomic():
+            user = request.user
+            data = request.data
 
-        count_favorite_teams = 0
-        favorite_team_id = None
-        for team in data:
-            if 'favorite' in team and team['favorite']:
-                count_favorite_teams += 1
-                favorite_team_id = team['id']
-            
-            if count_favorite_teams > 1:
-                return False, {'error': 'Only one favorite team allowed'}
+            count_favorite_teams = 0
+            favorite_team_id = None
+            for team in data:
+                if 'favorite' in team and team['favorite']:
+                    count_favorite_teams += 1
+                    favorite_team_id = team['id']
+                
+                if count_favorite_teams > 1:
+                    return False, {'error': 'Only one favorite team allowed'}
 
-        team_ids = [team['id'] for team in data]
-        teams = Team.objects.filter(id__in=team_ids)
+            team_ids = [team['id'] for team in data]
+            teams = Team.objects.filter(id__in=team_ids)
 
-        TeamLike.objects.filter(user=user).delete()
-        TeamLike.objects.bulk_create([
-            TeamLike(user=user, team=team) if favorite_team_id != team.id else TeamLike(user=user, team=team, favorite=True)
-            for team in teams
-        ])
+            TeamLike.objects.filter(user=user).delete()
+            TeamLike.objects.bulk_create([
+                TeamLike(user=user, team=team) if favorite_team_id != team.id else TeamLike(user=user, team=team, favorite=True)
+                for team in teams
+            ])
 
-        return True, None
+            return True, None
     
     @staticmethod
     def add_user_favorite_team(request, team_id):

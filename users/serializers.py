@@ -489,24 +489,24 @@ class UserChatParticipantMessageCreateSerializer(serializers.Serializer):
     message = serializers.CharField(min_length=1)
     
     def create(self, validated_data):
-        sender = validated_data.get('sender', None)
-        receiver = validated_data.get('receiver', None)
-
-        if sender is None:
-            raise serializers.ValidationError('Sender is required')
-
-        if receiver is None: 
-            raise serializers.ValidationError('Receiver is required')
-        
-        if receiver.chat_deleted:
-            receiver.chat_deleted = False
-            receiver.last_deleted_at = datetime.now(timezone.utc)
-            receiver.save()
-
-        ## remove the receiver from the validated data
-        validated_data.pop('receiver', None)
-
         with transaction.atomic():
+            sender = validated_data.get('sender', None)
+            receiver = validated_data.get('receiver', None)
+
+            if sender is None:
+                raise serializers.ValidationError('Sender is required')
+
+            if receiver is None: 
+                raise serializers.ValidationError('Receiver is required')
+            
+            if receiver.chat_deleted:
+                receiver.chat_deleted = False
+                receiver.last_deleted_at = datetime.now(timezone.utc)
+                receiver.save()
+
+            ## remove the receiver from the validated data
+            validated_data.pop('receiver', None)
+
             return UserChatParticipantMessage.objects.create(**validated_data)
 
 

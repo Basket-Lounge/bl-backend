@@ -198,7 +198,6 @@ class UserViewSet(ViewSet):
     def post_favorite_team(self, request, team_id):
         team = TeamService.add_user_favorite_team(request, team_id)
         serializer = TeamSerializerService.serialize_team_without_teamname(team)    
-        print(serializer.data)
         return Response(status=HTTP_201_CREATED, data=serializer.data)
     
     @post_favorite_team.mapping.delete
