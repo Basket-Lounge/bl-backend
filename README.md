@@ -44,6 +44,9 @@
   - 관리자는 일반 사용자의 정보를 수정할 수 있습니다.
   - 관리자는 일반 사용자의 게시글, 댓글을 삭제할 수 있습니다.
 
+## [DB 모델링](https://dbdiagram.io/d/66d810a8eef7e08f0ea2a34e)
+![DB 스키마](.images/db_schema.png)
+
 ## 설치 방법 (Linux/macOS 개발 환경 세팅)
 1. 해당 리포지토리를 클론합니다.
   ```bash
