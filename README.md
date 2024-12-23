@@ -73,45 +73,50 @@
   # Centrifugo 컨테이너를 실행합니다. [Centrifugo 설정 파일 저장 공간]에는 Centrifugo 설정 파일이 저장된 디렉토리를 입력합니다.
   docker run --rm --ulimit nofile=262144:262144 -v [Centrifugo 설정 파일 저장 공간]:/centrifugo -p 8000:8000 centrifugo/centrifugo:v5 centrifugo -c config.json
   ```
-7. .env 파일을 생성하고, 환경 변수를 설정합니다.
+7. .env 파일을 생성하고, 환경 변수를 설정합니다. 다음 링크에서 Google OAuth 2.0 클라이언트 ID와 시크릿을 발급받아 설정합니다. [Google Cloud Console](https://developers.google.com/identity/sign-in/web/sign-in)
   ```bash
    touch .env
   ```
   ```env
   DJANGO_SECRET_KEY=<your_secret_key>
   DB_NAME=<your_db_name>
-  DB_USER=<your_db_user>
-  DB_PASSWORD=<your_db_password>
-  DB_HOST=<your_db_host>
-  DB_PORT=<your_db_port>
+  DB_USER=postgres
+  DB_PASSWORD=<postgres 유저 비밀번호>
+  DB_HOST=127.0.0.1
+  DB_PORT=5432
 
   # 소셜 로그인을 위한 구글 클라이언트 ID, 시크릿을 설정합니다.
   GOOGLE_CLIENT_ID=<your_google_client_id>
   GOOGLE_CLIENT_SECRET=<your_google_client_secret>
 
+  # 프론트엔드 URL을 설정합니다. (ex. http://localhost:3000)
   FRONTEND_URL=<프론트엔드 URL>
   
   # Celery를 위한 Redis URL을 설정합니다.
-  REDIS_URL=redis://<your_redis_url>
-  CELERY_BROKER_URL=redis://<your_redis_url>/0
-  CELERY_RESULT_BACKEND=redis://<your_redis_url>/0
+  REDIS_URL=redis://127.0.0.1:6379
+  CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+  CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/0
   
   # WebSocket을 위한 Centrifugo API Key를 설정합니다.
   CENTRIFUGO_API_KEY=<your_centrifugo_api_key>
   ```
-8. Django 서버를 실행합니다.
+8. Django DB 마이그레이션을 진행합니다.
+  ```bash
+  DEVELOPMENT=True python3 manage.py migrate
+  ```
+9. Django 서버를 실행합니다.
   ```bash
   DEVELOPMENT=True python3 manage.py runserver
   ```
-9. 스케쥴링을 위한 Celery Beat를 실행합니다.
+10. 스케쥴링을 위한 Celery Beat를 실행합니다.
   ```bash
-  celery -A config worker -l info
+  DEVELOPMENT=True celery -A config worker -l info
   ```
-10. 각 큐에 대한 Celery Worker를 각 bash 창에서 실행합니다.
+11. 각 큐에 대한 Celery Worker를 각 bash 창에서 실행합니다.
   ```bash
-  celery -A backend worker --loglevel=info --concurrency=3 -n high-priority-worker1@%h -Q high_priority
-  celery -A backend worker --loglevel=info --concurrency=1 -n low-priority-worker1@%h -Q low_priority
-  celery -A backend worker --loglevel=info --concurrency=3 -n today-game-update-worker1@%h -Q today_game_update
+  DEVELOPMENT=True celery -A backend worker --loglevel=info --concurrency=3 -n high-priority-worker1@%h -Q high_priority
+  DEVELOPMENT=True celery -A backend worker --loglevel=info --concurrency=1 -n low-priority-worker1@%h -Q low_priority
+  DEVELOPMENT=True celery -A backend worker --loglevel=info --concurrency=3 -n today-game-update-worker1@%h -Q today_game_update
   ```
 
 ## 사용 기술
@@ -120,9 +125,10 @@
   - Celery
   - Django REST framework
   - Simple JWT
+  - dj-rest-auth
+  - django-allauth
 - DevOps
   - Docker
-  - Nginx
   - Gunicorn
   - Redis
   - PostgreSQL
