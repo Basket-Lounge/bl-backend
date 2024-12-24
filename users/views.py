@@ -56,6 +56,10 @@ from users.utils import (
     generate_websocket_subscription_token
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class CustomGoogleOAuth2Adapter(GoogleOAuth2Adapter):
     def complete_login(self, request, app, token, response, **kwargs):
@@ -100,11 +104,17 @@ class UserViewSet(ViewSet):
             permission_classes = [IsAuthenticated]
         elif self.action == 'patch_me':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'delete_chat':
+            permission_classes = [IsAuthenticated]
         elif self.action == 'enable_chat':
             permission_classes=[IsAuthenticated]
         elif self.action == 'post_like':
             permission_classes=[IsAuthenticated]
         elif self.action == 'delete_like':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_comments':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_posts':
             permission_classes=[IsAuthenticated]
         elif self.action == 'get_chats':
             permission_classes=[IsAuthenticated]
@@ -307,6 +317,8 @@ class UserViewSet(ViewSet):
     )
     def get_chat(self, request, user_id):
         user = request.user
+        if user_id == user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
         chat = UserChatService.get_chat(request, user_id)
         if not chat:
@@ -319,6 +331,9 @@ class UserViewSet(ViewSet):
 
     @get_chat.mapping.delete
     def delete_chat(self, request, user_id):
+        if user_id == request.user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
+
         UserChatService.delete_chat(request, user_id)
         return Response(status=HTTP_200_OK)
     
@@ -328,6 +343,9 @@ class UserViewSet(ViewSet):
         url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/messages',
     )
     def post_chat_message(self, request, user_id):
+        if user_id == request.user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
+
         message, chat = UserChatService.create_chat_message(request, user_id)
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
@@ -534,6 +552,7 @@ class JWTViewSet(ViewSet):
         url_path='refresh'
     )
     def refresh(self, request, pk=None):
+        logging.info('Refreshing token')
         refresh_token = request.auth
 
         refresh_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_REFRESH_TOKEN_COOKIE', 'refresh')

@@ -1,11 +1,12 @@
 from rest_framework.test import APITestCase, APIRequestFactory, APIClient, force_authenticate
 
-from teams.models import Language, Team, TeamLike, TeamName
-from users.models import Role, User
+from api.utils import MockResponse
+from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
+from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage
 from users.views import UserViewSet
 
+from unittest.mock import patch
 
-# Create your tests here.
 class UserTestCase(APITestCase):
     def setUp(self):
         regular_user = User.objects.create(
@@ -99,7 +100,6 @@ class UserAPIEndpointTestCase(APITestCase):
             language=english,
             name='test'
         )
-
         TeamLike.objects.create(
             team=sample_team,
             user=regular_user
@@ -352,3 +352,537 @@ class UserAPIEndpointTestCase(APITestCase):
         ).count()
 
         self.assertEqual(user_favorite_teams_count, 0)
+
+    def test_get_user_posts(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_user_posts'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/{user.id}/posts/'
+        )
+        response = view(request, pk=user.id)
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, pk=user.id)
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        team = Team.objects.all().first()
+        # insert a post
+        Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user
+        )
+        request = factory.get(
+            f'/api/users/{user.id}/posts/'
+        )
+        response = view(request, pk=user.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+        self.assertEqual(data['results'][0]['title'], 'test title')
+        # Shouldn't return the content
+        self.assertFalse('content' in data['results'][0])
+
+        # Create 10 more posts
+        for i in range(10):
+            Post.objects.create(
+                title=f'test title',
+                content=f'test content',
+                status=PostStatus.objects.get(name='created'),
+                team=team,
+                user=user
+            )
+
+        request = factory.get(
+            f'/api/users/{user.id}/posts/'
+        )
+        response = view(request, pk=user.id)
+
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+    def test_get_posts(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_posts'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/posts/'
+        )
+        response = view(request)
+        data = response.data
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        team = Team.objects.all().first()
+
+        # insert a post
+        Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user
+        )
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+        self.assertEqual(data['results'][0]['title'], 'test title')
+        # Shouldn't return the content
+        self.assertFalse('content' in data['results'][0])
+
+        # Create 10 more posts
+        for i in range(10):
+            Post.objects.create(
+                title=f'test title',
+                content=f'test content',
+                status=PostStatus.objects.get(name='created'),
+                team=team,
+                user=user
+            )
+
+        response = view(request)
+
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+    def test_get_roles(self):
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_roles'})
+
+        request = factory.get(
+            f'/api/users/roles/'
+        )
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 6)
+
+    def test_get_user_comments(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_user_comments'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/{user.id}/comments/'
+        )
+        response = view(request, pk=user.id)
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, pk=user.id)
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        team = Team.objects.all().first()
+
+        # insert a post and a comment
+        post = Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user
+        )
+        
+        PostComment.objects.create(
+            post=post,
+            user=user,
+            content='test comment',
+            status=PostCommentStatus.get_created_role()
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/{user.id}/comments/'
+        )
+        response = view(request, pk=user.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+        self.assertEqual(data['results'][0]['content'], 'test comment')
+        self.assertFalse('liked' in data['results'][0])
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, pk=user.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+        self.assertEqual(data['results'][0]['content'], 'test comment')
+        self.assertTrue('liked' in data['results'][0])
+        self.assertEqual(data['results'][0]['liked'], False)
+
+        # Create 10 more comments
+        for i in range(10):
+            PostComment.objects.create(
+                post=post,
+                user=user,
+                content='test comment',
+                status=PostCommentStatus.get_created_role()
+            )
+
+        request = factory.get(
+            f'/api/users/{user.id}/comments/'
+        )
+        response = view(request, pk=user.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+        self.assertEqual(data['results'][0]['content'], 'test comment')
+        self.assertFalse('liked' in data['results'][0])
+
+    def test_get_comments(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_comments'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/comments/'
+        )
+        response = view(request)
+        data = response.data
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        team = Team.objects.all().first()
+
+        # insert a post and a comment
+        post = Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user
+        )
+        
+        PostComment.objects.create(
+            post=post,
+            user=user,
+            content='test comment',
+            status=PostCommentStatus.get_created_role()
+        )
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+        self.assertEqual(data['results'][0]['content'], 'test comment')
+        self.assertFalse(data['previous'])
+        self.assertFalse(data['next'])
+        self.assertTrue('liked' in data['results'][0])
+        self.assertEqual(data['results'][0]['liked'], False)
+
+        # Create 10 more comments
+        for i in range(10):
+            PostComment.objects.create(
+                post=post,
+                user=user,
+                content='test comment',
+                status=PostCommentStatus.get_created_role()
+            )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+        self.assertEqual(data['results'][0]['content'], 'test comment')
+        self.assertTrue('liked' in data['results'][0])
+        self.assertEqual(data['results'][0]['liked'], False)
+
+    def test_get_chats(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_chats'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/chats/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['results'], [])
+        self.assertFalse(response.data['next'])
+        self.assertFalse(response.data['previous'])
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        UserChatParticipant.objects.create(
+            chat=chat,
+            user=User.objects.filter(username='testadmin').first()
+        )
+
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(len(response.data['results'][0]['participants']), 2)
+        self.assertFalse(response.data['results'][0]['participants'][0]['last_message'])
+        self.assertFalse(response.data['results'][0]['participants'][1]['last_message'])
+        self.assertEqual(response.data['results'][0]['participants'][0]['unread_messages_count'], 0)
+        self.assertEqual(response.data['results'][0]['participants'][1]['unread_messages_count'], 0)
+        self.assertTrue('user_data' in response.data['results'][0]['participants'][0])
+        self.assertTrue('user_data' in response.data['results'][0]['participants'][1])
+
+
+    def test_get_chat(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_chat'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        part2 = UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/chats/{user2.id}/'
+        )
+        response = view(request, pk=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['id'], str(chat.id))
+        self.assertEqual(len(data['participants']), 2)
+        self.assertFalse('last_message' in data['participants'][0])
+        self.assertFalse('last_message' in data['participants'][1])
+        self.assertFalse('unread_messages_count' in data['participants'][0])
+        self.assertFalse('unread_messages_count' in data['participants'][1])
+        self.assertTrue('user_data' in data['participants'][0])
+        self.assertTrue('user_data' in data['participants'][1])
+        self.assertTrue('messages' in data['participants'][0])
+        self.assertTrue('messages' in data['participants'][1])
+        self.assertEqual(len(data['participants'][0]['messages']), 0)
+        self.assertEqual(len(data['participants'][1]['messages']), 0)
+
+        # Create a message
+        UserChatParticipantMessage.objects.create(
+            sender=part1,
+            message="test message"
+        )
+        UserChatParticipantMessage.objects.create(
+            sender=part2,
+            message="test message"
+        )
+
+        response = view(request, user_id=user2.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('messages' in data['participants'][0])
+        self.assertTrue('messages' in data['participants'][1])
+        self.assertEqual(len(data['participants'][0]['messages']), 1)
+        self.assertEqual(len(data['participants'][1]['messages']), 1)
+        self.assertEqual(data['participants'][0]['messages'][0]['message'], 'test message')
+        self.assertEqual(data['participants'][1]['messages'][0]['message'], 'test message')
+
+        # attempt to chat with oneself
+        request = factory.get(
+            f'/api/users/me/chats/{user.id}/'
+        )
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user.id)
+
+        self.assertEqual(response.status_code, 400)
+    
+    def test_delete_chat(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'delete': 'delete_chat'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        user_participant = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # test an anonymous user
+        request = factory.delete(
+            f'/api/users/me/chats/{user2.id}/'
+        )
+        response = view(request, pk=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 200)
+
+        user_participant.refresh_from_db()
+        self.assertTrue(user_participant.chat_deleted)
+        self.assertIsNotNone(user_participant.last_deleted_at)
+
+    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    def test_post_chat_message(self, mocked):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'post': 'post_chat_message'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        part2 = UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/users/me/chats/{user2.id}/messages/',
+            data={'message': 'test message'},
+            format='json'
+        )
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 201)
+
+        message = UserChatParticipantMessage.objects.filter(sender=part1).first()
+        self.assertEqual(message.message, 'test message')

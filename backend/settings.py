@@ -24,6 +24,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = Env()
 env.read_env()
 
+# Create a .logs directory if it doesn't exist
+if not os.path.exists('.logs'):
+    os.makedirs('.logs')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
@@ -110,75 +113,82 @@ TEMPLATES = [
 WSGI_APPLICATION = 'backend.wsgi.application'
 
 # Logging settings
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {
-            "format": "[{levelname}] - {asctime} {message}",
-            "style": "{",
+if 'test' in sys.argv:
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': True,  # Disable all existing loggers
+    }
+else:
+    # Logging settings
+    LOGGING = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "verbose": {
+                "format": "[{levelname}] - {asctime} {message}",
+                "style": "{",
+            },
+            "verbose_error": {
+                "()": "backend.logging.CustomFormatter",
+            },
+            "simple": {
+                "format": "{levelname} {message}",
+                "style": "{",
+            },
         },
-        "verbose_error": {
-            "()": "backend.logging.CustomFormatter",
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "verbose",
+            },
+            "file": {
+                "class": "logging.handlers.TimedRotatingFileHandler",
+                "filename": ".logs/debug.log",
+                "formatter": "verbose_error",
+                "level": "ERROR",
+                "when": "midnight",
+                "utc": True,
+                "backupCount": 30,
+            },
         },
-        "simple": {
-            "format": "{levelname} {message}",
-            "style": "{",
+        "loggers": {
+            "django": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
+                "propagate": False,
+            },
+            "api": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
+                "propagate": False,
+            },
+            "games": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
+                "propagate": False,
+            },
+            "management": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
+                "propagate": False,
+            },
+            "players": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
+                "propagate": False,
+            },
+            "teams": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
+                "propagate": False,
+            },
+            "users": {
+                "handlers": ["console", "file"],
+                "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
+                "propagate": False,
+            },
         },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
-        "file": {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "filename": ".logs/debug.log",
-            "formatter": "verbose_error",
-            "level": "ERROR",
-            "when": "midnight",
-            "utc": True,
-            "backupCount": 30,
-        },
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
-            "propagate": False,
-        },
-        "api": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
-            "propagate": False,
-        },
-        "games": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
-            "propagate": False,
-        },
-        "management": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
-            "propagate": False,
-        },
-        "players": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
-            "propagate": False,
-        },
-        "teams": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
-            "propagate": False,
-        },
-        "users": {
-            "handlers": ["console", "file"],
-            "level": os.getenv("DJANGO_LOG_LEVEL", "DEBUG"),
-            "propagate": False,
-        },
-    },
-}
+    }
 
 
 # Database

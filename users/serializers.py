@@ -558,7 +558,8 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
         user = extra_context.get('user_last_deleted_at', None)
         if user:
             last_deleted_at = user.get('last_deleted_at', None)
-            messages = [message for message in messages if message.created_at > last_deleted_at]
+            if last_deleted_at:
+                messages = [message for message in messages if message.created_at > last_deleted_at]
 
         serializer = UserChatParticipantMessageSerializer(
             messages,
