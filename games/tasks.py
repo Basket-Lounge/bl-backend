@@ -8,23 +8,29 @@ from games.models import Game
 from games.services import update_live_scores, update_team_statistics
 
 from django.db import transaction, DatabaseError
+import logging
 
+logger = logging.getLogger(__name__)
 
 @shared_task
 def update_game_score():
     games = ScoreBoard().games.get_dict()
     
     for each in games:
-        boxscore = BoxScore(game_id=each['gameId']).get_dict()['game']
+        try:
+            boxscore = BoxScore(game_id=each['gameId']).get_dict()['game']
+        except:
+            logger.info("Boxscore not found: ", each['gameId'])
+            continue
 
         with transaction.atomic():
             try:
                 game = Game.objects.select_for_update(nowait=True).get(game_id=each['gameId'])
             except Game.DoesNotExist:
-                print("Game not found: ", each['gameId'])
+                logger.info("Game not found: ", each['gameId'])
                 continue
             except DatabaseError:
-                print("Database error: ", each['gameId'])
+                logger.info("Database error: ", each['gameId'])
                 continue
 
             ## if the game is over, skip
