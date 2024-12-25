@@ -578,6 +578,14 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
 
         if not last_message:
             return None
+        
+        extra_context = self.context.get('userchatparticipantmessage_extra', {})
+        user = extra_context.get('user_last_deleted_at', None)
+        if user:
+            last_deleted_at = user.get('last_deleted_at', None)
+            if last_deleted_at:
+                if last_message.created_at < last_deleted_at:
+                    return None
 
         serializer = UserChatParticipantMessageSerializer(
             last_message,
@@ -610,10 +618,30 @@ class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
     def get_participants(self, obj):
         if not hasattr(obj, 'userchatparticipant_set'):
             return None
-        
+
+        participants = obj.userchatparticipant_set.all()
         context = self.context.get('userchatparticipant', {})
+
+        # get the last deleted at for the user
+        if context.get('fields', []) and 'last_message' in context.get('fields', []):
+            extra_context = self.context.get('userchatparticipantmessage_extra', {})
+            if extra_context and 'user_id' in extra_context:
+                user_id = extra_context['user_id']
+                user_participant = None
+                for participant in participants:
+                    if participant.user.id == user_id:
+                        user_participant = participant
+                        break
+
+                self.context['userchatparticipantmessage_extra'] = {
+                    'user_last_deleted_at': {
+                        'id': extra_context['user_id'],
+                        'last_deleted_at': user_participant.last_deleted_at
+                    }
+                }
+
         serializer = UserChatParticipantSerializer(
-            obj.userchatparticipant_set.all(),
+            participants,
             many=True,
             context=self.context,
             **context    

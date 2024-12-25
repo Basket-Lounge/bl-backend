@@ -252,18 +252,20 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
         user_last_read_at = context.get('user_last_read_at', None)
         if not user_last_read_at:
             return None
-        
-        if not user_last_read_at.get('id', None):
-            user_last_read_at = user_last_read_at.get(obj.id, None)
-            if not user_last_read_at:
-                return None
 
+        inquiry_id = obj.inquiry.id 
+        if not user_last_read_at.get(inquiry_id, None):
+            return None
+        
+        user_last_read_at = user_last_read_at[inquiry_id]
         count = 0
         if obj.moderator.id != user_last_read_at['id']:
             last_read_at = user_last_read_at.get('last_read_at', None)
             for message in obj.inquirymoderatormessage_set.all():
                 if message.created_at > last_read_at:
                     count += 1
+                else:
+                    break
 
         return count
 

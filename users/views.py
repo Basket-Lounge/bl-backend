@@ -241,8 +241,7 @@ class UserViewSet(ViewSet):
         url_path=r'me/posts',
     )
     def get_posts(self, request):
-        user = request.user
-        posts = UserViewService.get_user_posts(request, user.id)
+        posts = UserViewService.get_user_posts(request, request.user.id)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
@@ -286,14 +285,11 @@ class UserViewSet(ViewSet):
         url_path=r'me/comments',
     )
     def get_comments(self, request):
-        user = request.user
-
-        comments = UserViewService.get_user_comments(request, user.id)
-
+        comments = UserViewService.get_user_comments(request, request.user.id)
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
-
         serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
+
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -306,7 +302,7 @@ class UserViewSet(ViewSet):
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(chats, request)
 
-        serializer = UserChatSerializerService.serialize_chats(paginated_data)
+        serializer = UserChatSerializerService.serialize_chats(request, paginated_data)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -372,9 +368,14 @@ class UserViewSet(ViewSet):
     )
     def mark_chat_messages_as_read(self, request, user_id):
         user = request.user
-        UserChatService.mark_chat_as_read(request, user_id)
+        if user_id == user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot mark your own chat as read'})
 
-        chat = UserChatService.get_chat_by_id(chat.id)
+        chat = UserChatService.mark_chat_as_read(request, user_id)
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        chat.refresh_from_db()
         chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
 
         sender_chat_notification_channel_name = f'users/{user.id}/chats/updates'
@@ -391,8 +392,11 @@ class UserViewSet(ViewSet):
         url_path=r'me/chats/(?P<user_id>[0-9a-f-])/block',
     )
     def block_chat(self, request, user_id):
+        if user_id == request.user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot block yourself'})
+
         UserChatService.block_chat(request, user_id)
-        return Response(status=HTTP_201_CREATED)
+        return Response(status=HTTP_200_OK)
     
     @action(
         detail=True,
@@ -400,16 +404,19 @@ class UserViewSet(ViewSet):
         url_path=r'chats',
     )
     def enable_chat(self, request, pk=None):
+        if pk == request.user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
+
         try:
             target_user = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        enabled, error_or_data = UserChatService.enable_chat(request, target_user) 
+        enabled, error, data = UserChatService.enable_chat(request, target_user) 
         if not enabled:
-            return Response(status=HTTP_400_BAD_REQUEST, data=error_or_data)
+            return Response(status=HTTP_400_BAD_REQUEST, data=error)
 
-        return Response(status=HTTP_201_CREATED, data=error_or_data)
+        return Response(status=HTTP_201_CREATED, data=data)
     
     @action(
         detail=True,
@@ -418,13 +425,13 @@ class UserViewSet(ViewSet):
     )
     def post_like(self, request, pk=None):
         user = request.user
+        if user.id == pk:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot like yourself'})
+
         try:
             user_to_like = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
-        
-        if user == user_to_like:
-            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot like yourself'})
         
         user = UserService.create_user_like(request, pk, user, user_to_like)
 
@@ -434,14 +441,14 @@ class UserViewSet(ViewSet):
     @post_like.mapping.delete
     def delete_like(self, request, pk=None):
         user = request.user
+        if user.id == pk:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot unlike yourself'})
+
         try:
             user_to_like = User.objects.get(id=pk)
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
         
-        if user == user_to_like:
-            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot like yourself'})
-
         user = UserService.delete_user_like(request, pk, user, user_to_like)
         serializer = UserSerializerService.serialize_user_with_id_only(user)        
         return Response(status=HTTP_200_OK, data=serializer.data)
@@ -472,7 +479,6 @@ class UserViewSet(ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         serializer = InquirySerializerService.serialize_inquiry(inquiry)
-
         return Response(serializer.data)
     
     @action(
@@ -490,8 +496,8 @@ class UserViewSet(ViewSet):
         if not inquiry:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        updated_rows = Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
-        if not updated_rows:
+        updated = Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
+        if not updated:
             return Response(status=HTTP_400_BAD_REQUEST)
 
         return Response(status=HTTP_200_OK)

@@ -1,8 +1,11 @@
+import uuid
 from rest_framework.test import APITestCase, APIRequestFactory, APIClient, force_authenticate
 
 from api.utils import MockResponse
+from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
-from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage
+from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
+from users.services import UserChatService
 from users.views import UserViewSet
 
 from unittest.mock import patch
@@ -886,3 +889,565 @@ class UserAPIEndpointTestCase(APITestCase):
 
         message = UserChatParticipantMessage.objects.filter(sender=part1).first()
         self.assertEqual(message.message, 'test message')
+
+
+    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    def test_mark_chat_messages_as_read(self, mocked):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'put': 'mark_chat_messages_as_read'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        part1_last_read_at = part1.last_read_at
+        part2 = UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+        part2_last_read_at = part2.last_read_at
+
+        # Create a message
+        UserChatParticipantMessage.objects.create(
+            sender=part1,
+            message="test message"
+        )
+        UserChatParticipantMessage.objects.create(
+            sender=part2,
+            message="test message"
+        )
+
+        # test an anonymous user
+        request = factory.put(
+            f'/api/users/me/chats/{user2.id}/mark-as-read/',
+        )
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        view(request, user_id=user2.id)
+
+        part1.refresh_from_db()
+        part2.refresh_from_db()
+
+        self.assertEqual(part1_last_read_at, part1.last_read_at)
+        self.assertNotEqual(part2.last_read_at, part2_last_read_at)
+
+    
+    def test_block_chat(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'post': 'block_chat'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        part1_last_blocked_at = part1.last_blocked_at
+        part2 = UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/users/me/chats/{user2.id}/block/',
+        )
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 200)
+
+        part1.refresh_from_db()
+        part2.refresh_from_db()
+
+        self.assertTrue(part1.chat_blocked)
+        self.assertNotEqual(part1_last_blocked_at, part1.last_blocked_at)
+        self.assertFalse(part2.chat_blocked)
+
+    def test_enable_chat(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'post': 'enable_chat'})
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/users/{user2.id}/chats/',
+        )
+        response = view(request, pk=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a non-existing chat
+        force_authenticate(request, user=user)
+        response = view(request, pk=1234)
+        self.assertEqual(response.status_code, 404)
+
+        # test a regular user
+        response = view(request, pk=user2.id)
+        self.assertEqual(response.status_code, 201)
+
+        chat = UserChat.objects.filter(
+            userchatparticipant__user=user
+        ).filter(
+            userchatparticipant__user=user2
+        )
+        part1 = UserChatParticipant.objects.filter(
+            chat=chat.first(),
+            user=user
+        ).first()
+        if not part1:
+            self.fail("UserChatParticipant not found")
+        part2 = UserChatParticipant.objects.filter(
+            chat=chat.first(),
+            user=user2
+        ).first()
+        if not part2:
+            self.fail("UserChatParticipant not found")
+
+        self.assertTrue(chat.exists())
+        
+        # block and re-enable the chat
+        UserChatService.block_chat(request, user2.id)
+        part1.refresh_from_db()
+        part2.refresh_from_db()
+
+        self.assertTrue(part1.chat_blocked)
+        self.assertFalse(part2.chat_blocked)
+        part1_last_blocked_at = part1.last_blocked_at
+        part2_last_read_at = part2.last_read_at
+
+        response = view(request, pk=user2.id)
+        part1.refresh_from_db()
+        part2.refresh_from_db()
+
+        self.assertFalse(part1.chat_blocked)
+        self.assertFalse(part1.chat_deleted)
+        self.assertFalse(part2.chat_blocked)
+        self.assertFalse(part2.chat_deleted)
+        self.assertNotEqual(part1_last_blocked_at, part1.last_blocked_at) 
+        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
+        
+        part2_last_read_at = part2.last_read_at
+        part1_last_deleted_at = part1.last_deleted_at
+
+        # delete and re-enable the chat
+        UserChatService.delete_chat(request, user2.id)
+        part1.refresh_from_db()
+        part2.refresh_from_db()
+
+        self.assertTrue(part1.chat_deleted)
+        self.assertNotEqual(part1_last_deleted_at, part1.last_deleted_at)
+        self.assertFalse(part2.chat_deleted)
+        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
+
+        part2_last_read_at = part2.last_read_at
+        part1_last_deleted_at = part1.last_deleted_at
+
+        response = view(request, pk=user2.id)
+        part1.refresh_from_db()
+        part2.refresh_from_db()
+
+        self.assertFalse(part1.chat_deleted)
+        self.assertFalse(part1.chat_blocked)
+        self.assertFalse(part2.chat_deleted)
+        self.assertFalse(part2.chat_blocked)
+        self.assertNotEqual(part1_last_deleted_at, part1.last_deleted_at)
+        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
+
+
+    def test_post_like(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'post': 'post_like'})
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/users/{user.id}/likes/',
+        )
+        response = view(request, pk=user.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test liking oneself
+        force_authenticate(request, user=user)
+        response = view(request, pk=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test a regular user
+        request = factory.post(
+            f'/api/users/{user2.id}/likes/',
+        )
+        force_authenticate(request, user=user)
+        response = view(request, pk=user2.id)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(UserLike.objects.filter(
+            user=user,
+            liked_user=user2
+        ).exists())
+
+    def test_delete_like(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'delete': 'delete_like'})
+
+        # test an anonymous user
+        request = factory.delete(
+            f'/api/users/{user.id}/likes/',
+        )
+        response = view(request, pk=user.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test unliking oneself
+        force_authenticate(request, user=user)
+        response = view(request, pk=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test a regular user
+        UserLike.objects.create(
+            user=user,
+            liked_user=user2
+        )
+
+        request = factory.delete(
+            f'/api/users/{user2.id}/likes/',
+        )
+        force_authenticate(request, user=user)
+        response = view(request, pk=user2.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(UserLike.objects.filter(
+            user=user,
+            liked_user=user2
+        ).exists())
+
+    def test_get_inquiries(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_inquiries'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/inquiries/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        # Create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+
+        InquiryMessage.objects.create(
+            inquiry=inquiry,
+            message='test message',
+        )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+        self.assertEqual(data['results'][0]['title'], 'test title')
+        self.assertFalse('messages' in data['results'][0])
+        self.assertFalse('unread_messages_count' in data['results'][0])
+        self.assertFalse('user_data' in data['results'][0])
+        self.assertTrue('last_message' in data['results'][0])
+        self.assertTrue('inquiry_type_data' in data['results'][0])
+        self.assertTrue('moderators' in data['results'][0])
+        self.assertEqual(data['results'][0]['last_message']['message'], 'test message')
+        self.assertEqual(data['results'][0]['inquiry_type_data']['name'], inquiry_type.name)
+        self.assertEqual(data['results'][0]['moderators'], [])
+
+        # Create 10 more inquiries
+        admin = User.objects.filter(username='testadmin').first()
+        if not admin:
+            self.fail("User not found")
+
+        for i in range(10):
+            inquiry = Inquiry.objects.create(
+                user=user,
+                inquiry_type=inquiry_type,
+                title='test title',
+            )
+            InquiryMessage.objects.create(
+                inquiry=inquiry,
+                message='test message',
+            )
+
+            moderator = InquiryModerator.objects.create(
+                inquiry=inquiry,
+                moderator=admin
+            )
+            InquiryModeratorMessage.objects.create(
+                inquiry_moderator=moderator,
+                message='test message'
+            )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+        for inquiry in data['results']:
+            self.assertEqual(inquiry['title'], 'test title')
+            self.assertFalse('messages' in inquiry)
+            self.assertFalse('unread_messages_count' in inquiry)
+            self.assertFalse('user_data' in inquiry)
+            self.assertTrue('last_message' in inquiry)
+            self.assertTrue('inquiry_type_data' in inquiry)
+            self.assertTrue('moderators' in inquiry)
+            self.assertTrue('moderator_data' in inquiry['moderators'][0])
+            self.assertTrue('last_message' in inquiry['moderators'][0])
+            self.assertTrue('unread_messages_count' in inquiry['moderators'][0])
+            self.assertEqual(inquiry['last_message']['message'], 'test message')
+            self.assertEqual(inquiry['inquiry_type_data']['name'], inquiry_type.name) 
+            self.assertEqual(len(inquiry['moderators']), 1)
+            self.assertEqual(inquiry['moderators'][0]['moderator_data']['username'], admin.username)
+            self.assertEqual(inquiry['moderators'][0]['last_message']['message'], 'test message')
+            self.assertEqual(inquiry['moderators'][0]['unread_messages_count'], 1)
+    
+    def test_get_inquiry(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        admin = User.objects.filter(username='testadmin').first()
+        if not admin:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_inquiry'})
+
+        # Create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+        InquiryMessage.objects.create(
+            inquiry=inquiry,
+            message='test message',
+        )
+
+        moderator = InquiryModerator.objects.create(
+            inquiry=inquiry,
+            moderator=admin
+        )
+        InquiryModeratorMessage.objects.create(
+            inquiry_moderator=moderator,
+            message='test message'
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/inquiries/{inquiry.id}/'
+        )
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['id'], str(inquiry.id))
+        self.assertEqual(data['title'], 'test title')
+        self.assertFalse('user_data' in data)
+        self.assertFalse('last_message' in data)
+        self.assertFalse('unread_messages_count' in data)
+        self.assertTrue('messages' in data)
+        self.assertTrue('inquiry_type_data' in data)
+        self.assertTrue('moderators' in data)
+        self.assertEqual(data['inquiry_type_data']['name'], inquiry_type.name)
+        self.assertEqual(len(data['moderators']), 1)
+        self.assertEqual(len(data['messages']), 1)
+        self.assertEqual(data['messages'][0]['message'], 'test message')
+        self.assertFalse('last_message' in data['moderators'][0])
+        self.assertFalse('unread_messages_count' in data['moderators'][0])
+        self.assertFalse('inquiry_data' in data['moderators'][0])
+        self.assertTrue('messages' in data['moderators'][0])
+        self.assertTrue('moderator_data' in data['moderators'][0])
+        self.assertEqual(data['moderators'][0]['moderator_data']['username'], admin.username)
+        self.assertEqual(len(data['moderators'][0]['messages']), 1)
+        self.assertEqual(data['moderators'][0]['messages'][0]['message'], 'test message')
+
+    def test_mark_inquiry_messages_as_read(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        admin = User.objects.filter(username='testadmin').first()
+        if not admin:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'put': 'mark_inquiry_messages_as_read'})
+
+        # Create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+        InquiryMessage.objects.create(
+            inquiry=inquiry,
+            message='test message',
+        )
+
+        moderator = InquiryModerator.objects.create(
+            inquiry=inquiry,
+            moderator=admin
+        )
+        InquiryModeratorMessage.objects.create(
+            inquiry_moderator=moderator,
+            message='test message'
+        )
+
+        # test an anonymous user
+        request = factory.put(
+            f'/api/users/me/inquiries/{inquiry.id}/mark-as-read/',
+        )
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        last_read_at = inquiry.last_read_at
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 200)
+
+        inquiry.refresh_from_db()
+        self.assertNotEqual(last_read_at, inquiry.last_read_at)
+
+        # test a non-existing inquiry
+        random_uuid = str(uuid.uuid4())
+        request = factory.put(
+            f'/api/users/me/inquiries/{random_uuid}/mark-as-read/',
+        )
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=random_uuid)
+        self.assertEqual(response.status_code, 404)
+    
+    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    def test_post_inquiry_message(self, mocked):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        admin = User.objects.filter(username='testadmin').first()
+        if not admin:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'post': 'post_inquiry_message'})
+
+        # Create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+        InquiryModerator.objects.create(
+            inquiry=inquiry,
+            moderator=admin
+        )
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/users/me/inquiries/{inquiry.id}/messages/',
+            data={'message': 'test message'},
+            format='json'
+        )
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 201)
+
+        message = InquiryMessage.objects.filter(inquiry=inquiry).first()
+        if not message:
+            self.fail("InquiryMessage not found")
+
+        self.assertEqual(message.message, 'test message')
+
+        # test an empty message
+        request = factory.post(
+            f'/api/users/me/inquiries/{inquiry.id}/messages/',
+            data={'message': ''},
+            format='json'
+        )
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 400)

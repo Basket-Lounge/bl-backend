@@ -464,7 +464,7 @@ class UserService:
 
         unliked_user = User.objects.filter(id=pk).only('id')
         if request.user.is_authenticated:
-            user = user.annotate(
+            unliked_user = unliked_user.annotate(
                 liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
             )
 
@@ -753,12 +753,14 @@ class UserChatService:
         ).first()
 
         if not chat:
-            return
+            return None
 
         UserChatParticipant.objects.filter(
             chat=chat,
             user__id=user_id
         ).update(last_read_at=datetime.now(timezone.utc))
+
+        return chat
 
     @staticmethod
     def delete_chat(request, user_id):
@@ -793,7 +795,7 @@ class UserChatService:
         ).first()
 
         if not chat:
-            return
+            return None
 
         UserChatParticipant.objects.filter(
             chat=chat,
@@ -826,7 +828,7 @@ class UserChatService:
 
             # If the chat is blocked by a user that is not the current user, then return 400
             if target_user.chat_blocked or target_participant.chat_blocked:
-                return False, {'error': 'Chat is blocked by the other user.'}
+                return False, {'error': 'Chat is blocked by the other user.'}, None
             
             if user_participant.chat_blocked:
                 user_participant.chat_blocked = False
@@ -835,18 +837,20 @@ class UserChatService:
                 user_participant.last_deleted_at = datetime.now(timezone.utc)
                 target_participant.last_read_at = datetime.now(timezone.utc)
                 user_participant.save()
+                target_participant.save()
 
-                return True, {'id': str(chat.id)}
+                return True, None, {'id': str(chat.id)}
 
             if user_participant.chat_deleted:
                 user_participant.chat_deleted = False
                 user_participant.last_deleted_at = datetime.now(timezone.utc)
                 target_participant.last_read_at = datetime.now(timezone.utc)
                 user_participant.save()
+                target_participant.save()
 
-                return True, {'id': str(chat.id)}
+                return True, None, {'id': str(chat.id)}
 
-            return False, {'error': 'Chat is already enabled.'}
+            return False, {'error': 'Chat is already enabled.'}, None
 
         chat = UserChat.objects.create()
         UserChatParticipant.objects.bulk_create([
@@ -854,12 +858,12 @@ class UserChatService:
             UserChatParticipant(user=target_user, chat=chat)
         ])
 
-        return True, {'id': str(chat.id)}
+        return True, None, {'id': str(chat.id)}
 
     
 class UserChatSerializerService:
     @staticmethod
-    def serialize_chats(chats):
+    def serialize_chats(request, chats):
         return UserChatSerializer(
             chats,
             many=True,
@@ -874,6 +878,9 @@ class UserChatSerializerService:
                 },
                 'userchatparticipantmessage': {
                     'fields_exclude': ['sender_data', 'user_data']
+                },
+                'userchatparticipantmessage_extra': {
+                    'user_id': request.user.id
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -1011,6 +1018,7 @@ class InquiryService:
             Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
+                    'inquiry',
                     'moderator'
                 ).prefetch_related(
                     Prefetch(
@@ -1095,6 +1103,9 @@ class InquirySerializerService:
                 'messages'
             ],
             context={
+                'inquiry': {
+                    'fields': ['id']
+                },
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
@@ -1104,7 +1115,6 @@ class InquirySerializerService:
                 'inquirymoderator': {
                     'fields': [
                         'moderator_data', 
-                        'messages', 
                         'last_message',
                         'unread_messages_count'
                     ]
