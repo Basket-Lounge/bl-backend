@@ -1,12 +1,18 @@
+from datetime import datetime, timezone
+from http import cookies
 import uuid
+
+from django.conf import settings
 from rest_framework.test import APITestCase, APIRequestFactory, APIClient, force_authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.utils import MockResponse
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
+from users.authentication import CookieJWTRefreshAuthentication
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.services import UserChatService
-from users.views import UserViewSet
+from users.views import JWTViewSet, UserViewSet
 
 from unittest.mock import patch
 
@@ -1451,3 +1457,72 @@ class UserAPIEndpointTestCase(APITestCase):
         force_authenticate(request, user=user)
         response = view(request, inquiry_id=inquiry.id)
         self.assertEqual(response.status_code, 400)
+
+
+class JWTViewSetTestCase(APITestCase):
+    def setUp(self):
+        regular_user = User.objects.create(
+            username='testuser', 
+            email="asdf@asdf.com"
+        )
+        regular_user.set_password('testpassword')
+        regular_user.save()
+
+    def test_refresh(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'post': 'refresh'})
+
+        # test an anonymous user
+        request = factory.post(
+            f'/api/token/refresh/',
+        )
+        request.auth = None
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        user = User.objects.filter(username='testuser').first()
+        token = RefreshToken.for_user(user)
+        force_authenticate(request, user=user, token=token)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue('username' in data)
+        self.assertTrue('email' in data)
+        self.assertTrue('id' in data)
+        self.assertEqual(data['username'], user.username)
+        self.assertEqual(data['email'], user.email)
+        self.assertEqual(data['id'], user.id)
+
+        response_cookies : cookies.SimpleCookie = response.cookies
+        refresh_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_REFRESH_TOKEN_COOKIE', 'refresh')
+        access_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_ACCESS_TOKEN_COOKIE', 'access')
+        secure = settings.SIMPLE_JWT.get('AUTH_COOKIE_SECURE', True)
+        httpOnly = settings.SIMPLE_JWT.get('AUTH_COOKIE_HTTP_ONLY', True)
+        path = settings.SIMPLE_JWT.get('AUTH_COOKIE_PATH', '/')
+        domain = settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN', None) if settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN', None) else ''
+        samesite = settings.SIMPLE_JWT.get('AUTH_COOKIE_SAMESITE', 'Lax')
+
+        self.assertTrue(refresh_token_cookie_key in response_cookies)
+        self.assertTrue(access_token_cookie_key in response_cookies)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['path'], path)
+        self.assertEqual(response_cookies[access_token_cookie_key]['path'], path)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['secure'], secure)
+        self.assertEqual(response_cookies[access_token_cookie_key]['secure'], secure)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['httponly'], httpOnly)
+        self.assertEqual(response_cookies[access_token_cookie_key]['httponly'], httpOnly)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['samesite'], samesite)
+        self.assertEqual(response_cookies[access_token_cookie_key]['samesite'], samesite)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['domain'], domain)
+        self.assertEqual(response_cookies[access_token_cookie_key]['domain'], domain)
+
+        date_string = response_cookies[refresh_token_cookie_key]['expires']
+        date_format = '%a, %d %b %Y %H:%M:%S %Z'
+        converted_date = datetime.strptime(date_string, date_format)
+        converted_date = converted_date.replace(tzinfo=timezone.utc)
+        self.assertEqual(converted_date, datetime.fromtimestamp(token.get('exp'), tz=timezone.utc))
