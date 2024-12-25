@@ -5,8 +5,6 @@ from django.utils.functional import cached_property
 
 from rest_framework.pagination import PageNumberPagination, BasePagination
 
-from api.mixins import PaginationHandlerMixin
-
 
 class LargeTablePaginator(Paginator):
     """
@@ -28,8 +26,8 @@ class LargeTablePaginator(Paginator):
         """
         try:
             with transaction.atomic(), connection.cursor() as cursor:
-                # Limit to 150 ms
-                cursor.execute('SET LOCAL statement_timeout TO 5;')
+                # Limit to 500 ms
+                cursor.execute('SET LOCAL statement_timeout TO 500;')
                 return super().count
         except OperationalError:
             pass
