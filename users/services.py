@@ -141,7 +141,14 @@ def create_post_queryset_without_prefetch_for_user(
     search_term = request.query_params.get('search', None)
 
     if kwargs is not None:
-        queryset = Post.objects.filter(**kwargs)
+        if 'Qs' in kwargs:
+            Qs = kwargs.pop('Qs')
+            if not isinstance(Qs, list):
+                Qs = [Qs]
+
+            queryset = Post.objects.filter(*Qs, **kwargs)
+        else:
+            queryset = Post.objects.filter(**kwargs)
     else:
         queryset = Post.objects.all()
 
@@ -580,6 +587,11 @@ class UserSerializerService:
 class UserViewService:
     @staticmethod
     def get_user_posts(request, user_id):
+        Qs = None
+        if request.user.is_authenticated:
+            if request.user.id == user_id:
+                Qs = Q(status__name='created') | Q(status__name='hidden')
+
         posts = create_post_queryset_without_prefetch_for_user(
             request,
             fields_only=[
@@ -595,7 +607,7 @@ class UserViewService:
                 'status__name'
             ],
             user__id=user_id,
-            status__name='created'
+            Qs=Q(status__name='created') if Qs is None else Qs
         ).prefetch_related(
             'postlike_set',
             'postcomment_set',

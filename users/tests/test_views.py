@@ -436,6 +436,36 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertTrue(data['next'])
         self.assertFalse(data['previous'])
 
+        # test hidden and deleted posts
+
+        Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='hidden'),
+            team=team,
+            user=user
+        )
+
+        Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='deleted'),
+            team=team,
+            user=user
+        )
+
+        request = factory.get(
+            f'/api/users/{user.id}/posts/'
+        )
+        response = view(request, pk=user.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
     def test_get_posts(self):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -500,6 +530,34 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(len(data['results']), 10)
         self.assertTrue(data['next'])
         self.assertFalse(data['previous'])
+
+
+        # test hidden and deleted posts
+        Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='hidden'),
+            team=team,
+            user=user
+        )
+
+        Post.objects.create(
+            title='test title',
+            content='test content',
+            status=PostStatus.objects.get(name='deleted'),
+            team=team,
+            user=user
+        )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 12)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
 
     def test_get_roles(self):
         factory = APIRequestFactory()

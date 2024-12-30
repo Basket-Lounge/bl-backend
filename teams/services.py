@@ -955,6 +955,8 @@ class PostService:
                     'language'
                 )
             ),
+        ).exclude(
+            Q(status__name='deleted') | Q(status__name='hidden')
         )
 
         if request.user.is_authenticated:
@@ -993,7 +995,9 @@ class PostService:
             'status__name'
         ).filter(
             team__id=pk,
-            id=post_id
+            id=post_id,
+        ).exclude(
+            status__name='deleted'
         )
 
         if request.user.is_authenticated:
@@ -1125,6 +1129,8 @@ class PostService:
             'status__name'
         ).filter(
             created_at__gte=datetime.now() - timedelta(hours=24)
+        ).exclude(
+            Q(status__name='deleted') | Q(status__name='hidden')
         )
 
         if request.user.is_authenticated:
@@ -1169,6 +1175,8 @@ class PostService:
             'status__name'
         ).filter(
             created_at__gte=datetime.now() - timedelta(hours=24)
+        ).exclude(
+            Q(status__name='deleted') | Q(status__name='hidden')
         )
 
         if request.user.is_authenticated:
