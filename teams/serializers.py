@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from teams.models import PostComment, PostCommentStatus, PostCommentStatusDisplayName, PostStatus, PostStatusDisplayName, Team, TeamLike, TeamName, Language
+from teams.models import PostCommentStatus, PostCommentStatusDisplayName, PostStatus, PostStatusDisplayName, Team, TeamLike, TeamName, Language
 
 
 class LanguageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):

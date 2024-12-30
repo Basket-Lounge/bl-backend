@@ -258,7 +258,7 @@ class TeamViewSet(viewsets.ViewSet):
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        posts = PostService.get_team_10_popular_posts(request, team)
+        posts = PostService.get_team_10_popular_posts(request, team.id)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
@@ -272,13 +272,11 @@ class TeamViewSet(viewsets.ViewSet):
         url_path=r'posts/(?P<post_id>[^/.]+)'
     )
     def get_team_post(self, request, pk=None, post_id=None):
-        try:
-            Team.objects.get(id=pk)
-        except Team.DoesNotExist:
-            return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
-
         post = PostService.get_post(request, pk, post_id)
         if not post:
+            return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
+        
+        if post.status.name == 'hidden' and post.user != request.user:
             return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
 
         serializer = PostSerializerService.serialize_post(request, post)
@@ -287,7 +285,13 @@ class TeamViewSet(viewsets.ViewSet):
     @get_team_post.mapping.patch
     def edit_team_post(self, request, pk=None, post_id=None):
         try:
-            post = Post.objects.get(team__id=pk, id=post_id, user=request.user)
+            post = Post.objects.exclude(
+                status__name='deleted'
+            ).get(
+                team__id=pk, 
+                id=post_id, 
+                user=request.user,
+            )
         except Post.DoesNotExist:
             return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
 
