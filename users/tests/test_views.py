@@ -10,7 +10,6 @@ from api.utils import MockResponse
 from games.models import Game
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
-from users.authentication import CookieJWTRefreshAuthentication
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.services import UserChatService
 from users.views import JWTViewSet, UserViewSet

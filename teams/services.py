@@ -1103,10 +1103,7 @@ class PostService:
             'team',
             'status'
         ).prefetch_related(
-            Prefetch(
-                'postlike_set',
-                queryset=PostLike.objects.all()
-            ),
+            'postlike_set',
             'postcomment_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
@@ -1114,6 +1111,7 @@ class PostService:
                     'language'
                 )
             ),
+            'user__teamlike_set',
         ).only(
             'id', 
             'title', 
@@ -1125,10 +1123,9 @@ class PostService:
             'team__symbol', 
             'status__id', 
             'status__name'
+        ).filter(
+            created_at__gte=datetime.now() - timedelta(hours=24)
         )
-        # ).filter(
-        #     created_at__gte=datetime.now() - timedelta(hours=24)
-        # )
 
         if request.user.is_authenticated:
             posts = posts.annotate(
@@ -1158,6 +1155,7 @@ class PostService:
                     'language'
                 )
             ),
+            'user__teamlike_set',
         ).only(
             'id', 
             'title', 
@@ -1169,10 +1167,9 @@ class PostService:
             'team__symbol', 
             'status__id', 
             'status__name'
+        ).filter(
+            created_at__gte=datetime.now() - timedelta(hours=24)
         )
-        # ).filter(
-        #     created_at__gte=datetime.now() - timedelta(hours=24)
-        # )
 
         if request.user.is_authenticated:
             posts = posts.annotate(
@@ -1362,7 +1359,7 @@ class PostSerializerService:
             fields_exclude=fields_exclude,
             context={
                 'user': {
-                    'fields': ('id', 'username')
+                    'fields': ('id', 'username', 'favorite_team')
                 },
                 'team': {
                     'fields': ('id', 'symbol')
