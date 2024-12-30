@@ -82,7 +82,7 @@ class Post(models.Model):
     status = models.ForeignKey(PostStatus, on_delete=models.PROTECT)
     team = models.ForeignKey(Team, on_delete=models.CASCADE)
     user = models.ForeignKey('users.User', on_delete=models.CASCADE)
-    title = models.CharField(max_length=128)
+    title = models.CharField(max_length=512)
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

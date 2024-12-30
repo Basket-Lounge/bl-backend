@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase, APIRequestFactory, APIClient, force
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.utils import MockResponse
+from games.models import Game
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
 from users.authentication import CookieJWTRefreshAuthentication
@@ -1468,6 +1469,20 @@ class JWTViewSetTestCase(APITestCase):
         regular_user.set_password('testpassword')
         regular_user.save()
 
+        regular_user2 = User.objects.create(
+            username='testuser2', 
+            email="user@user.com"
+        )
+        regular_user2.set_password('testpassword')
+        regular_user2.save()
+
+        regular_user3 = User.objects.create(
+            username='testuser3', 
+            email="asdfasdf@asdfasdf.com"
+        )
+        regular_user3.set_password('testpassword')
+        regular_user3.save()
+
     def test_refresh(self):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -1526,3 +1541,254 @@ class JWTViewSetTestCase(APITestCase):
         converted_date = datetime.strptime(date_string, date_format)
         converted_date = converted_date.replace(tzinfo=timezone.utc)
         self.assertEqual(converted_date, datetime.fromtimestamp(token.get('exp'), tz=timezone.utc))
+    
+    def test_delete_refresh(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'delete': 'delete_refresh'})
+        
+        # test an anonymous user
+        request = factory.delete(
+            f'/api/token/refresh/',
+        )
+        request.auth = None
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        token = RefreshToken.for_user(user)
+        force_authenticate(request, user=user, token=token)
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+
+        response_cookies : cookies.SimpleCookie = response.cookies
+        refresh_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_REFRESH_TOKEN_COOKIE', 'refresh')
+        access_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_ACCESS_TOKEN_COOKIE', 'access')
+        secure = settings.SIMPLE_JWT.get('AUTH_COOKIE_SECURE', True)
+        httpOnly = settings.SIMPLE_JWT.get('AUTH_COOKIE_HTTP_ONLY', True)
+        path = settings.SIMPLE_JWT.get('AUTH_COOKIE_PATH', '/')
+        domain = settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN', None) if settings.SIMPLE_JWT.get('AUTH_COOKIE_DOMAIN', None) else ''
+        samesite = settings.SIMPLE_JWT.get('AUTH_COOKIE_SAMESITE', 'Lax')
+
+        self.assertTrue(refresh_token_cookie_key in response_cookies)
+        self.assertTrue(access_token_cookie_key in response_cookies)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['path'], path)
+        self.assertEqual(response_cookies[access_token_cookie_key]['path'], path)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['secure'], secure)
+        self.assertEqual(response_cookies[access_token_cookie_key]['secure'], secure)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['httponly'], httpOnly)
+        self.assertEqual(response_cookies[access_token_cookie_key]['httponly'], httpOnly)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['samesite'], samesite)
+        self.assertEqual(response_cookies[access_token_cookie_key]['samesite'], samesite)
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['domain'], domain)
+        self.assertEqual(response_cookies[access_token_cookie_key]['domain'], domain)
+        self.assertTrue('max-age' in response_cookies[refresh_token_cookie_key])
+        self.assertTrue('expires' in response_cookies[access_token_cookie_key])
+        self.assertEqual(response_cookies[refresh_token_cookie_key]['max-age'], '')
+
+    def test_access(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'get': 'access'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/token/access/',
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        user = User.objects.filter(username='testuser').first()
+        token = RefreshToken.for_user(user)
+        force_authenticate(request, user=user, token=token)
+        response = view(request)
+        data = response.data
+
+        self.assertTrue('token' in data)
+
+    def test_subscribe_for_live_game_chat(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        team1 = Team.objects.order_by('id').first()
+        team2 = Team.objects.order_by('-id').first()
+
+        game = Game.objects.create(
+            game_id="testgame",
+            game_date_est=datetime.now(),
+            game_sequence=1,
+            game_status_id=1,
+            game_status_text="test status",
+            game_code="test code",
+            home_team=team1,
+            visitor_team=team2,
+            season='2024',
+            live_period=1,
+            arena_name="test arena",
+        )
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'get': 'subscribe_for_live_game_chat'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/token/subscription/games/{game.game_id}/live-chat/'
+        )
+        response = view(request, game_id=game.game_id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, game_id=game.game_id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('token' in data)
+
+    def test_subscribe_for_user_chat(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        user3 = User.objects.filter(username='testuser3').first()
+        if not user3:
+            self.fail("User not found")
+
+        # create a user chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        part2 = UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # create a user chat of only user2 and user3
+        chat2 = UserChat.objects.create()
+        UserChatParticipant.objects.create( 
+            chat=chat2,
+            user=user2
+        )
+
+        UserChatParticipant.objects.create(
+            chat=chat2,
+            user=user3
+        )
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'get': 'subscribe_for_user_chat'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/token/subscription/users/chats/{str(chat.id)}/'
+        )
+        response = view(request, chat_id=str(chat.id))
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, chat_id=str(chat.id))
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('token' in data)
+
+        # test a chat that the user is not a part of
+        request = factory.get(
+            f'/api/token/subscription/users/chats/{str(chat2.id)}/'
+        )
+        force_authenticate(request, user=user)
+        response = view(request, chat_id=str(chat2.id))
+        self.assertEqual(response.status_code, 404)
+    
+    def test_subscribe_for_user_chat_updates(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'get': 'subscribe_for_user_chat_updates'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/token/subscription/users/chat-updates/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('token' in data)
+
+    def test_subscribe_for_user_inquiry(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        # create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+
+        InquiryMessage.objects.create(
+            inquiry=inquiry,
+            message='test message',
+        )
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'get': 'subscribe_for_user_inquiry'})
+        request = factory.get(
+            f'/api/token/subscription/users/inquiries/{str(inquiry.id)}/'
+        )
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=str(inquiry.id))
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('token' in data)
+
+    def test_subscribe_for_user_inquiry_updates(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = JWTViewSet.as_view({'get': 'subscribe_for_user_inquiry_updates'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/token/subscription/users/inquiry-updates/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('token' in data)

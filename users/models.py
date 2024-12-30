@@ -89,6 +89,20 @@ class User(AbstractBaseUser):
         # Simplest possible answer: Yes, always
         return True
 
+    def calculate_experience_for_next_level(self, level):
+        return round(0.04 * (level ** 3) + 0.8 * (level ** 2) + 2 * level)
+    
+    def get_level(self):
+        '''
+        Calculate the level of a user based on their experience
+        '''
+        level = 0
+
+        while self.experience >= self.calculate_experience_for_next_level(level):
+            level += 1
+
+        return level - 1
+
     # @property
     # def is_staff(self):
     #     "Is the user a member of staff?"

@@ -17,7 +17,6 @@ from api.mixins import DynamicFieldsSerializerMixin
 from teams.models import Post, PostComment, PostCommentReply, PostCommentReplyStatus, PostCommentStatus, PostStatus
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamLikeSerializer, TeamSerializer
 from users.models import Role, UserChat, UserChatParticipant, UserChatParticipantMessage
-from users.utils import calculate_level
 
 
 class CustomSocialLoginSerializer(SocialLoginSerializer):
@@ -157,7 +156,7 @@ class UserSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         if not hasattr(obj, 'experience'):
             return None
 
-        return calculate_level(obj.experience)
+        return obj.get_level()
     
     def get_teamlike_set(self, obj):
         if not hasattr(obj, 'teamlike_set'):

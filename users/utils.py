@@ -1,24 +1,9 @@
 import uuid
 
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken, UntypedToken
+from rest_framework_simplejwt.tokens import RefreshToken, UntypedToken
 
 from django.conf import settings
 
-
-def next_level(level):
-    return round(0.04 * (level ** 3) + 0.8 * (level ** 2) + 2 * level)
-
-def calculate_level(experience):
-    '''
-    Calculate the level of a user based on their experience
-    '''
-
-    level = 0
-
-    while experience >= next_level(level):
-        level += 1
-
-    return level - 1
 
 def generate_random_username():
     return str(uuid.uuid4())

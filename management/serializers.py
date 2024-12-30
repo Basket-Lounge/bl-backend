@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 
 class InquiryCreateSerializer(serializers.Serializer):
     inquiry_type = serializers.IntegerField()
-    title = serializers.CharField(min_length=1, max_length=512)
+    title = serializers.CharField(min_length=8, max_length=512)
     message = serializers.CharField(min_length=1, max_length=4096)
 
     def create(self, validated_data):
