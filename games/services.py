@@ -33,11 +33,11 @@ def get_today_games():
     ).prefetch_related(
         Prefetch(
             'home_team__teamname_set',
-            queryset=TeamName.objects.select_related('language').all()
+            queryset=TeamName.objects.select_related('language')
         ),
         Prefetch(
             'visitor_team__teamname_set',
-            queryset=TeamName.objects.select_related('language').all()
+            queryset=TeamName.objects.select_related('language')
         ),
     ).order_by(
         'game_sequence'

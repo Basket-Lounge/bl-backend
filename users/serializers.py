@@ -297,8 +297,8 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
 
 
 class PostUpdateSerializer(serializers.Serializer):
-    title = serializers.CharField(min_length=1, max_length=128)
-    content = serializers.CharField(min_length=1)
+    title = serializers.CharField(min_length=8, max_length=512)
+    content = serializers.CharField(min_length=1, max_length=8192)
     status = serializers.IntegerField()
 
     def update(self, instance, validated_data):
@@ -315,6 +315,9 @@ class PostUpdateSerializer(serializers.Serializer):
         if status is not None:
             status_obj = PostStatus.objects.filter(id=status).first()
             if status_obj:
+                if status_obj.name == 'deleted':
+                    raise serializers.ValidationError('Cannot update a deleted post')
+
                 instance.status = status_obj
 
         instance.save()

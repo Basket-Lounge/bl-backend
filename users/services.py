@@ -587,10 +587,10 @@ class UserSerializerService:
 class UserViewService:
     @staticmethod
     def get_user_posts(request, user_id):
-        Qs = None
+        q = Q(status__name='created')
         if request.user.is_authenticated:
             if request.user.id == user_id:
-                Qs = Q(status__name='created') | Q(status__name='hidden')
+                q = Q(status__name='created') | Q(status__name='hidden')
 
         posts = create_post_queryset_without_prefetch_for_user(
             request,
@@ -607,7 +607,6 @@ class UserViewService:
                 'status__name'
             ],
             user__id=user_id,
-            Qs=Q(status__name='created') if Qs is None else Qs
         ).prefetch_related(
             'postlike_set',
             'postcomment_set',
@@ -617,7 +616,7 @@ class UserViewService:
                     'language'
                 )
             ),
-        )
+        ).filter(q)
 
         if request.user.is_authenticated:
             posts = posts.annotate(

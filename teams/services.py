@@ -1115,6 +1115,10 @@ class PostService:
                     'language'
                 )
             ),
+            Prefetch(
+                'team__teamname_set',
+                queryset=TeamName.objects.select_related('language')
+            ),
             'user__teamlike_set',
         ).only(
             'id', 
@@ -1370,7 +1374,10 @@ class PostSerializerService:
                     'fields': ('id', 'username', 'favorite_team')
                 },
                 'team': {
-                    'fields': ('id', 'symbol')
+                    'fields': ('id', 'symbol', 'teamname_set')
+                },
+                'teamname': {
+                    'fields': ('name', 'language')
                 },
                 'poststatusdisplayname': {
                     'fields': ['display_name', 'language_data']
