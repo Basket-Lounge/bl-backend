@@ -41,6 +41,7 @@ class Role(models.Model):
 
 
 class User(AbstractBaseUser):
+    id = models.BigAutoField(primary_key=True)
     role = models.ForeignKey(
         Role, 
         on_delete=models.PROTECT,
@@ -102,12 +103,6 @@ class User(AbstractBaseUser):
             level += 1
 
         return level - 1
-
-    # @property
-    # def is_staff(self):
-    #     "Is the user a member of staff?"
-    #     # Simplest possible answer: All admins are staff
-    #     return self.is_staff
 
     USERNAME_FIELD = 'username'
     EMAIL_FIELD = 'email'
