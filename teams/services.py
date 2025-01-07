@@ -10,9 +10,12 @@ from nba_api.stats.endpoints.leaguestandingsv3 import LeagueStandingsV3
 from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
 import pytz
 
+from api.exceptions import AnonymousUserError
 from games.models import Game, LineScore
 from games.serializers import GameSerializer, LineScoreSerializer, PlayerCareerStatisticsSerializer, PlayerStatisticsSerializer
 from games.services import combine_games_and_linescores
+from notification.models import NotificationTemplate
+from notification.services import NotificationService
 from players.models import Player, PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
 from teams.forms import TeamPostCommentForm, TeamPostForm
@@ -32,7 +35,7 @@ from teams.models import (
 )
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.utils import calculate_time
-from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostCommentUpdateSerializer, PostSerializer, PostUpdateSerializer
+from users.serializers import PostCommentCreateSerializer, PostCommentReplyCreateSerializer, PostCommentReplySerializer, PostCommentSerializer, PostCommentUpdateSerializer, PostSerializer, PostUpdateSerializer
 from users.services import create_post_queryset_without_prefetch_for_user
 
 
@@ -1009,7 +1012,7 @@ class PostService:
 
     @staticmethod
     def get_post_after_creating_like(request, team_id, post_id):
-        post =  Post.objects.filter(
+        post = Post.objects.filter(
             team__id=team_id,
             id=post_id
         ).only(
@@ -1208,21 +1211,14 @@ class PostService:
 
     @staticmethod
     def create_comment(request, post):
-        form = TeamPostCommentForm(request.data)
-        if not form.is_valid():
-            return False, form.errors.as_data()
-        
-        user = request.user
-        data = form.cleaned_data
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
 
-        PostComment.objects.create(
-            user=user,
-            post=post,
-            status=PostCommentStatus.get_created_role(),
-            content=data['content']
-        )
+        serializer = PostCommentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(post=post, user=request.user)
 
-        return True, None
+        NotificationService.create_notification_for_post_comment(post, request.user)
     
     @staticmethod
     def update_comment(request, comment):
@@ -1294,21 +1290,22 @@ class PostService:
     
     @staticmethod
     def create_comment_reply(request, comment):
-        form = TeamPostCommentForm(request.data)
-        if not form.is_valid():
-            return False, form.errors.as_data()
-        
-        user = request.user
-        data = form.cleaned_data
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
 
-        PostCommentReply.objects.create(
-            user=user,
-            post_comment=comment,
-            content=data['content']
-        )
+        serializer = PostCommentReplyCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reply = serializer.save(post_comment=comment, user=request.user)
 
-        return True, None
-    
+        replies_count = comment.postcommentreply_set.count()
+
+        if replies_count % 10 == 0 and replies_count != 0:
+            NotificationService.create_notification_for_post_comment_reply(
+                reply, 
+                replies_count, 
+                request.user
+            )
+
     @staticmethod
     def get_comment_replies(comment_id):
         return PostCommentReply.objects.filter(
@@ -1326,7 +1323,7 @@ class PostService:
             'status__id',
             'status__name'
         ).order_by('-created_at')
-
+    
 
 class PostSerializerService:
     @staticmethod

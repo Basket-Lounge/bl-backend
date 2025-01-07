@@ -1,6 +1,7 @@
 from rest_framework.test import APITestCase, APIRequestFactory, force_authenticate
 
-from teams.models import Post, PostLike, PostStatus, Team
+from notification.models import Notification
+from teams.models import Post, PostLike, PostStatus, Team, PostComment, PostCommentStatus, PostCommentReply
 from teams.views import TeamViewSet
 from users.models import  User
 
@@ -560,3 +561,409 @@ class TeamsAPIEndpointTestCase(APITestCase):
         response = view(request, pk=team.id, post_id=str(deleted_post.id))
 
         self.assertEqual(response.status_code, 404)
+
+    def test_like_post(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        for i in range(3, 20):
+            User.objects.create(
+                username=f'testuser{i}',
+                email=f'testuser{i}@test.com'
+            )
+
+        team = Team.objects.all().first()
+
+        factory = APIRequestFactory()
+        fake_post_id = '00000000-0000-0000-0000-000000000000'
+        request = factory.post(f'/api/teams/{team.id}/posts/{fake_post_id}/likes/')
+
+        view = TeamViewSet.as_view({'post': 'like_post'})
+        response = view(request, pk=team.id, post_id=fake_post_id)
+
+        self.assertEqual(response.status_code, 401)
+
+        # Insert some posts
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        request = factory.post(f'/api/teams/{team.id}/posts/{str(post.id)}/likes/')
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        data = response.data
+        self.assertEqual(response.status_code, 401)
+        
+        likes_count = 0
+        for i in range(2, 12):
+            like_user = User.objects.filter(username=f'testuser{i}').first()
+            if not user:
+                self.fail("User not found")
+
+            request = factory.post(f'/api/teams/{team.id}/posts/{str(post.id)}/likes/')
+            force_authenticate(request, user=like_user)
+            response = view(request, pk=team.id, post_id=str(post.id))
+            data = response.data
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue('id' in data)
+            self.assertTrue('liked' in data)
+            self.assertTrue('likes_count' in data)
+
+            self.assertTrue(data['liked'])
+            likes_count += 1
+            self.assertEqual(data['likes_count'], likes_count)
+
+        # Check if a notifcation is created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='post-likes',
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+        # Removing a like and creating another like to test if the notification is created again
+        like_user = User.objects.filter(username='testuser2').first()
+        if not user:
+            self.fail("User not found")
+
+        PostLike.objects.filter(
+            post=post,
+            user=like_user,
+        ).delete()
+        likes_count -= 1
+
+        self.assertEqual(likes_count, 9)
+
+        request = factory.post(f'/api/teams/{team.id}/posts/{str(post.id)}/likes/')
+        force_authenticate(request, user=like_user)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('id' in data)
+        self.assertTrue('liked' in data)
+        self.assertTrue('likes_count' in data)
+
+        self.assertTrue(data['liked'])
+        likes_count += 1
+        self.assertEqual(data['likes_count'], likes_count)
+
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='post-likes',
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+    def test_post_comment(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        # Create a post
+        team = Team.objects.all().first()
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        factory = APIRequestFactory()
+        fake_post_id = '00000000-0000-0000-0000-000000000000'
+        request = factory.post(f'/api/teams/{team.id}/posts/{fake_post_id}/comments/')
+        view = TeamViewSet.as_view({'post': 'post_comment'})
+
+        response = view(request, pk=team.id, post_id=fake_post_id)
+        self.assertEqual(response.status_code, 401)
+
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/',
+            data={
+                'content': 'Test Comment',
+            },
+            format='json'
+        )
+        response = view(request, pk=team.id, post_id=str(post.id))
+        self.assertEqual(response.status_code, 401)
+
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        self.assertEqual(response.status_code, 201)
+
+        # Check if a notification is created
+        # Since the user is the author of the post, no notification should be created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='post-comment',
+        )
+
+        self.assertFalse(notification.exists())
+
+        # Create a comment
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/',
+            data={
+                'content': 'Test Comment',
+            },
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        self.assertEqual(response.status_code, 201)
+
+        # Check if a notification is created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='post-comment',
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+        # Create another comment via user2
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/',
+            data={
+                'content': 'Test Comment 2',
+            },
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        self.assertEqual(response.status_code, 201)
+
+        # Check if a notification is created
+        # Since the user already commented on the post, no notification should be created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='post-comment',
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+        # Create a comment with no content
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/',
+            data={"content": ""},
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue('error' in response.data)
+        self.assertTrue('content' in response.data['error'])
+
+        # Create a comment with content that is more than 8192 characters
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/',
+            data={"content": "a" * 8193},
+            format='json'
+        )
+
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue('error' in response.data)
+        self.assertTrue('content' in response.data['error'])
+
+        # Create a comment with no content 
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/',
+            data={},
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue('error' in response.data)
+        self.assertTrue('content' in response.data['error'])
+
+
+    def test_reply_comment(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        # Create a post
+        team = Team.objects.all().first()
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        factory = APIRequestFactory()
+        fake_post_id = '00000000-0000-0000-0000-000000000000'
+        fake_comment_id = '00000000-0000-0000-0000-000000000000'
+        request = factory.post(f'/api/teams/{team.id}/posts/{fake_post_id}/comments/{fake_comment_id}/replies/')
+        view = TeamViewSet.as_view({'post': 'reply_comment'})
+
+        response = view(request, pk=team.id, post_id=fake_post_id, comment_id=fake_comment_id)
+        self.assertEqual(response.status_code, 401)
+
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{fake_comment_id}/replies/',
+            data={
+                'content': 'Test Reply',
+            },
+            format='json'
+        )
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=fake_comment_id)
+        self.assertEqual(response.status_code, 401)
+
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=fake_comment_id)
+
+        self.assertEqual(response.status_code, 404)
+
+        # Create a comment
+        comment = PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.objects.get(name='created'),
+            content='Test Comment',
+        )
+
+        # Create 10 replies
+        for i in range(10):
+            request = factory.post(
+                f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/',
+                data={
+                    'content': 'Test Reply',
+                },
+                format='json'
+            )
+            force_authenticate(request, user=user)
+            response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+            self.assertEqual(response.status_code, 201)
+
+        # Check if a notification is created
+        # Since the user is the author of the comment, no notification should be created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='comment-replies',
+        )
+
+        self.assertFalse(notification.exists())
+
+        # Create 10 replies by user2
+        for i in range(10):
+            request = factory.post(
+                f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/',
+                data={
+                    'content': 'Test Reply',
+                },
+                format='json'
+            )
+            force_authenticate(request, user=user2)
+            response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+            self.assertEqual(response.status_code, 201)
+
+        # Check if a notification is created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='comment-replies',
+        )
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+        self.assertEqual(notification.first().data['number'], 20)
+
+        # Delete a reply, recreate it and check if the notification is created again
+        reply = PostCommentReply.objects.all().first()
+        reply.delete()
+
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/',
+            data={
+                'content': 'Test Reply',
+            },
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+        self.assertEqual(response.status_code, 201)
+
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='comment-replies',
+        )
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+        self.assertEqual(notification.first().data['number'], 20)
+
+        # Create a reply with no content
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/',
+            data={"content": ""},
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue('error' in response.data)
+        self.assertTrue('content' in response.data['error'])
+
+        # Create a reply with content that is more than 8192 characters
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/',
+            data={"content": "a" * 8193},
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue('error' in response.data)
+        self.assertTrue('content' in response.data['error'])
+
+        # Create a reply with no content
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/',
+            data={},
+            format='json'
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue('error' in response.data)
+        self.assertTrue('content' in response.data['error'])
