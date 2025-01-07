@@ -385,6 +385,33 @@ class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeria
         return obj.liked
     
 
+class PostCommentCreateSerializer(serializers.Serializer):
+    content = serializers.CharField(min_length=1, max_length=8192)
+    
+    def create(self, validated_data):
+        with transaction.atomic():
+            status = PostCommentStatus.objects.get(name='created')
+            post = validated_data.get('post', None)
+            user = validated_data.get('user', None)
+            content = validated_data.get('content', None)
+
+            if post is None:
+                raise serializers.ValidationError('Post is required')
+
+            if user is None: 
+                raise serializers.ValidationError('User is required')
+
+            if content is None:
+                raise serializers.ValidationError('Content is required')
+
+            return PostComment.objects.create(
+                post=post,
+                user=user,
+                status=status,
+                content=content
+            )
+    
+
 class PostCommentUpdateSerializer(serializers.Serializer):
     content = serializers.CharField(min_length=1)
     status = serializers.IntegerField()
@@ -455,6 +482,31 @@ class PostCommentReplySerializer(DynamicFieldsSerializerMixin, serializers.Model
             **context    
         )
         return serializer.data
+
+
+class PostCommentReplyCreateSerializer(serializers.Serializer):
+    content = serializers.CharField(min_length=1, max_length=8192)
+    
+    def create(self, validated_data):
+        with transaction.atomic():
+            post_comment = validated_data.get('post_comment', None)
+            user = validated_data.get('user', None)
+            content = validated_data.get('content', None)
+
+            if post_comment is None:
+                raise serializers.ValidationError('Post comment is required')
+
+            if user is None: 
+                raise serializers.ValidationError('User is required')
+
+            if content is None:
+                raise serializers.ValidationError('Content is required')
+
+            return PostCommentReply.objects.create(
+                post_comment=post_comment,
+                user=user,
+                content=content
+            )
 
 
 class UserChatParticipantMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):

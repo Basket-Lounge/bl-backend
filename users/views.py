@@ -15,7 +15,8 @@ from rest_framework.status import (
     HTTP_404_NOT_FOUND,
 )
 
-from api.paginators import CustomPageNumberPagination
+from api.exceptions import CustomError
+from api.paginators import CustomPageNumberPagination, NotificationHeaderPageNumberPagination
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
 from management.models import (
@@ -25,6 +26,7 @@ from management.serializers import (
     InquiryMessageCreateSerializer, 
     InquiryMessageSerializer, 
 )
+from notification.services import NotificationSerializerService, NotificationService
 from teams.services import PostSerializerService, TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
 from users.models import Role, User, UserChat
@@ -135,6 +137,20 @@ class UserViewSet(ViewSet):
         elif self.action == 'mark_inquiry_messages_as_read':
             permission_classes=[IsAuthenticated]
         elif self.action == 'post_inquiry_message':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_notifications':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'delete_notifications':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'mark_notifications_as_read':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_notification':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'delete_notification':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'mark_notification_as_read':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_unread_notifications_count':
             permission_classes=[IsAuthenticated]
 
         return [permission() for permission in permission_classes]
@@ -547,6 +563,90 @@ class UserViewSet(ViewSet):
         
         return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
     
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/notifications',
+    )
+    def get_notifications(self, request, pk=None):
+        notifications = NotificationService.get_user_notifications(request, request.user)
+        pagination = NotificationHeaderPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(notifications, request)
+
+        serializer = NotificationSerializerService.serialize_notifications(paginated_data)
+        return pagination.get_paginated_response(serializer.data)
+    
+    @get_notifications.mapping.delete
+    def delete_notifications(self, request, pk=None):
+        try:
+            NotificationService.delete_user_notifications(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
+        return Response(status=HTTP_200_OK)
+    
+    @get_notifications.mapping.patch
+    def mark_notifications_as_read(self, request, pk=None):
+        try:
+            NotificationService.mark_user_notifications_as_read(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
+        return Response(status=HTTP_200_OK)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/notifications/(?P<notification_id>[0-9a-f-]+)',
+    )
+    def get_notification(self, request, notification_id):
+        notification = NotificationService.get_user_notification_by_id(request, notification_id)
+        if not notification:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        serializer = NotificationSerializerService.serialize_notification(notification)
+        return Response(serializer.data)
+    
+    @get_notification.mapping.delete
+    def delete_notification(self, request, notification_id):
+        try:
+            NotificationService.delete_user_notification(request, notification_id)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
+        return Response(status=HTTP_200_OK)
+    
+    @get_notification.mapping.patch
+    def mark_notification_as_read(self, request, notification_id):
+        try:
+            NotificationService.mark_user_notification_as_read(request, notification_id)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
+        return Response(status=HTTP_200_OK)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/notifications/unread',
+    )
+    def get_unread_notifications(self, request):
+        notifications = NotificationService.get_user_unread_notifications(request)
+
+        pagination = NotificationHeaderPageNumberPagination()
+        paginated_data = pagination.paginate_queryset(notifications, request)
+
+        serializer = NotificationSerializerService.serialize_notifications(paginated_data)
+        return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/notifications/unread/count',
+    )
+    def get_unread_notifications_count(self, request):
+        count = NotificationService.get_user_unread_notifications_count(request)
+        return Response({'count': count})
 
 class JWTViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
