@@ -3,7 +3,7 @@ from django.db import connection, transaction
 from django.db.utils import OperationalError
 from django.utils.functional import cached_property
 
-from rest_framework.pagination import PageNumberPagination, BasePagination
+from rest_framework.pagination import PageNumberPagination
 
 
 class LargeTablePaginator(Paginator):
@@ -52,3 +52,9 @@ class CustomPageNumberPagination(PageNumberPagination):
     django_paginator_class = LargeTablePaginator
     page_size = 10
     page_query_param = 'page'
+
+
+class NotificationHeaderPageNumberPagination(CustomPageNumberPagination):
+    page_size = 3
+    page_query_param = 'page'
+    max_page_size = 3
