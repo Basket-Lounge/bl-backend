@@ -49,7 +49,7 @@ def create_notification_templates(apps, schema_editor):
     Korean = Language.objects.get(name='Korean')
 
     # User notification templates in English and Korean
-    user_login_temp, _ =NotificationTemplate.objects.get_or_create(
+    user_login_temp, _ = NotificationTemplate.objects.get_or_create(
         type=user_type,
         subject='user-login',
     )
