@@ -97,6 +97,8 @@ class NotificationRecipient(models.Model):
     recipient = models.ForeignKey(User, on_delete=models.CASCADE)
     read = models.BooleanField(default=False)
     read_at = models.DateTimeField(null=True)
+    deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True)
 
     def __str__(self):
         return f'{self.id}'

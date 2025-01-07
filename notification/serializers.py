@@ -89,6 +89,7 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
     picture_url = serializers.SerializerMethodField()
     redirect_url = serializers.SerializerMethodField()
     contents = serializers.SerializerMethodField()
+    recipients = serializers.SerializerMethodField()
 
     class Meta:
         model = Notification
@@ -117,6 +118,20 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
             keys = placeholder.split(":")  # Split the keys by ':'
             value = self.get_nested_value(context, keys)  # Fetch the nested value
             return str(value) if value is not None else match.group(0)  # Replace or keep original
+        
+        # Substitute placeholders with their values
+        return re.sub(pattern, replacer, template)
+    
+    def replace_placeholders_for_contents(self, template, context):
+        # Regular expression to match placeholders
+        pattern = r"<([^>]+)>"
+        
+        # Function to replace each match
+        def replacer(match):
+            placeholder = match.group(1)  # Extract the placeholder without the angle brackets
+            keys = placeholder.split(":")  # Split the keys by ':'
+            value = self.get_nested_value(context, keys)  # Fetch the nested value
+            return f'[[{str(value)}]]' if value is not None else match.group(0)  # Replace or keep original
         
         # Substitute placeholders with their values
         return re.sub(pattern, replacer, template)
@@ -288,15 +303,28 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
             actors = actor_serializer.data
 
             for actor in actors:
-                contents[key] = self.replace_placeholders(contents[key], actor)
+                contents[key] = self.replace_placeholders_for_contents(contents[key], actor)
 
             if hasattr(obj, 'data') and obj.data:
-                contents[key] = self.replace_placeholders(contents[key], obj.data)
+                contents[key] = self.replace_placeholders_for_contents(contents[key], obj.data)
 
             if self.find_placeholders(contents[key]):
                 contents[key] = None
 
         return contents
+    
+    def get_recipients(self, obj):
+        if not hasattr(obj, 'notificationrecipient_set'):
+            return None
+        
+        context = self.context.get('notificationrecipient', {})
+        serializer = NotificationRecipientSerializer(
+            obj.notificationrecipient_set.all(),
+            many=True,
+            context=self.context,
+            **context
+        )
+        return serializer.data
 
 
 class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -328,7 +356,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'notification'):
             return None
         
-        context = self.context.get('notification', {})
+        context = self.context.get('actor_notification', {})
         serializer = NotificationSerializer(
             obj.notification,
             context=self.context,
@@ -340,7 +368,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'user'):
             return None
         
-        context = self.context.get('user', {})
+        context = self.context.get('actor_user', {})
         serializer = UserSerializer(
             obj.user,
             context=self.context,
@@ -352,7 +380,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'post'):
             return None
         
-        context = self.context.get('post', {})
+        context = self.context.get('actor_post', {})
         serializer = PostSerializer(
             obj.post,
             context=self.context,
@@ -364,7 +392,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'comment'):
             return None
         
-        context = self.context.get('postcomment', {})
+        context = self.context.get('actor_postcomment', {})
         serializer = PostCommentSerializer(
             obj.comment,
             context=self.context,
@@ -376,7 +404,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'reply'):
             return None
         
-        context = self.context.get('postcommentreply', {})
+        context = self.context.get('actor_postcommentreply', {})
         serializer = PostCommentReplySerializer(
             obj.reply,
             context=self.context,
@@ -388,7 +416,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'game'):
             return None
         
-        context = self.context.get('game', {})
+        context = self.context.get('actor_game', {})
         serializer = GameSerializer(
             obj.game,
             context=self.context,
@@ -401,7 +429,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'player'):
             return None
         
-        context = self.context.get('player', {})
+        context = self.context.get('actor_player', {})
         serializer = PlayerSerializer(
             obj.player,
             context=self.context,
@@ -413,7 +441,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'team'):
             return None
         
-        context = self.context.get('team', {})
+        context = self.context.get('actor_team', {})
         serializer = TeamSerializer(
             obj.team,
             context=self.context,
@@ -425,7 +453,7 @@ class NotificationActorSerializer(DynamicFieldsSerializerMixin, serializers.Mode
         if not hasattr(obj, 'chat'):
             return None
         
-        context = self.context.get('userchat', {})
+        context = self.context.get('actor_userchat', {})
         serializer = UserChatSerializer(
             obj.chat,
             context=self.context,
@@ -443,12 +471,12 @@ class NotificationRecipientSerializer(DynamicFieldsSerializerMixin, serializers.
         exclude = ['notification', 'recipient']
 
     def get_recipient_data(self, obj):
-        if not hasattr(obj, 'user'):
+        if not hasattr(obj, 'recipient'):
             return None
         
         context = self.context.get('user', {})
         serializer = UserSerializer(
-            obj.user,
+            obj.recipient,
             context=self.context,
             **context
         )
