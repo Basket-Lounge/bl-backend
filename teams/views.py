@@ -11,7 +11,7 @@ from rest_framework.exceptions import ValidationError
 
 from api.exceptions import CustomError
 from api.paginators import CustomPageNumberPagination
-from notification.services import NotificationService
+from notification.services.models_services import NotificationService
 from teams.models import (
     Post,
     PostComment,

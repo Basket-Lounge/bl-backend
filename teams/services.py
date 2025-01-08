@@ -19,7 +19,7 @@ from games.serializers import (
     PlayerStatisticsSerializer
 )
 from games.services import combine_games_and_linescores
-from notification.services import NotificationService
+from notification.services.models_services import NotificationService
 from players.models import Player, PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
 from teams.forms import TeamPostCommentForm, TeamPostForm
