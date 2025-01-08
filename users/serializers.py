@@ -18,6 +18,8 @@ from teams.models import Post, PostComment, PostCommentReply, PostCommentReplySt
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamLikeSerializer, TeamSerializer
 from users.models import Role, UserChat, UserChatParticipant, UserChatParticipantMessage
 
+from notification.services.models_services import NotificationService
+
 
 class CustomSocialLoginSerializer(SocialLoginSerializer):
     def get_social_login(self, adapter, app, token, response):
@@ -117,6 +119,10 @@ class CustomSocialLoginSerializer(SocialLoginSerializer):
 
             login.lookup()
             login.save(request, connect=True)
+
+        ## Add Notification For login
+        if login.account.user.login_notification_enabled:
+            NotificationService.create_notification_for_login(login.account.user)
 
         attrs['user'] = login.account.user
         return attrs

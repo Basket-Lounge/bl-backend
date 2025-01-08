@@ -26,7 +26,8 @@ from management.serializers import (
     InquiryMessageCreateSerializer, 
     InquiryMessageSerializer, 
 )
-from notification.services import NotificationSerializerService, NotificationService
+from notification.services.models_services import NotificationService
+from notification.services.serializers_services import NotificationSerializerService
 from teams.services import PostSerializerService, TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
 from users.models import Role, User, UserChat

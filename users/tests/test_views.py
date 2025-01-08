@@ -10,7 +10,7 @@ from api.utils import MockResponse
 from games.models import Game
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
 from notification.models import Notification, NotificationTemplate
-from notification.services import NotificationService
+from notification.services.models_services import NotificationService
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.services import UserChatService
