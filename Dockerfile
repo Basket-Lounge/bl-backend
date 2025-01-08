@@ -10,4 +10,4 @@ COPY . /code/
 RUN ./sys.sh
 
 USER james
-WORKDIR /home/james
+WORKDIR /home/james/code
