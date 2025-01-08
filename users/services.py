@@ -525,6 +525,7 @@ class UserSerializerService:
                 'chat_blocked',
                 'likes_count',
                 'favorite_team',
+                'login_notification_enabled'
             ),
             context={
                 'team': {
@@ -559,58 +560,6 @@ class UserSerializerService:
 
         if requesting_user is not None and requesting_user.is_authenticated:
             fields.append('liked')
-
-        return UserSerializer(
-            user,
-            fields=fields,
-            context={
-                'team': {
-                    'fields': ['id', 'symbol']
-                },
-            }
-        )
-    
-    @staticmethod
-    def serialize_user_with_liked(user):
-        fields = [
-            'id',
-            'username',
-            'role_data',
-            'level',
-            'introduction',
-            'created_at',
-            'is_profile_visible',
-            'chat_blocked',
-            'likes_count',
-            'favorite_team',
-            'liked'
-        ]
-
-        return UserSerializer(
-            user,
-            fields=fields,
-            context={
-                'team': {
-                    'fields': ['id', 'symbol']
-                },
-            }
-        )
-    
-    @staticmethod
-    def serialize_another_user_with_liked(user):
-        fields = [
-            'id',
-            'username',
-            'role_data',
-            'level',
-            'introduction',
-            'created_at',
-            'is_profile_visible',
-            'chat_blocked',
-            'likes_count',
-            'favorite_team',
-            'liked'
-        ]
 
         return UserSerializer(
             user,
