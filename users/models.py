@@ -56,6 +56,7 @@ class User(AbstractBaseUser):
     experience = models.IntegerField(default=0)
     introduction = models.TextField(blank=True)
     chat_blocked = models.BooleanField(default=False)
+    login_notification_enabled = models.BooleanField(default=False)
     is_profile_visible = models.BooleanField(
         default=True,
         verbose_name='Profile visibility'
