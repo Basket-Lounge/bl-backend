@@ -25,7 +25,7 @@ env = Env()
 env.read_env()
 
 # Create a .logs directory if it doesn't exist
-if not os.path.exists('.logs'):
+if not os.path.exists('.logs') and 'test' not in sys.argv:
     os.makedirs('.logs')
 
 # Quick-start development settings - unsuitable for production
