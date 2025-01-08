@@ -1,7 +1,16 @@
 from rest_framework.test import APITestCase, APIRequestFactory, force_authenticate
 
 from notification.models import Notification
-from teams.models import Post, PostLike, PostStatus, Team, PostComment, PostCommentStatus, PostCommentReply
+from teams.models import (
+    Post, 
+    PostLike, 
+    PostStatus, 
+    Team, 
+    PostComment, 
+    PostCommentStatus, 
+    PostCommentReply, 
+    PostCommentLike
+)
 from teams.views import TeamViewSet
 from users.models import  User
 
@@ -967,3 +976,129 @@ class TeamsAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertTrue('error' in response.data)
         self.assertTrue('content' in response.data['error'])
+
+    def test_like_comment(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        # Create 10 more users
+        for i in range(3, 13):
+            User.objects.create(
+                username=f'testuser{i}',
+                email=f'testuser{i}@email.com'
+            )
+        
+        # Create a post
+        team = Team.objects.all().first()
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        # Create a comment
+        comment = PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.objects.get(name='created'),
+            content='Test Comment',
+        )
+
+        factory = APIRequestFactory()
+        fake_post_id = '00000000-0000-0000-0000-000000000000'
+        fake_comment_id = '00000000-0000-0000-0000-000000000000'
+        request = factory.post(f'/api/teams/{team.id}/posts/{fake_post_id}/comments/{fake_comment_id}/likes/')
+        view = TeamViewSet.as_view({'post': 'like_comment'})
+
+        response = view(request, pk=team.id, post_id=fake_post_id, comment_id=fake_comment_id)
+        self.assertEqual(response.status_code, 401)
+
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=fake_post_id, comment_id=fake_comment_id)
+        self.assertEqual(response.status_code, 404)
+
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{fake_comment_id}/likes/',
+        )
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=fake_comment_id)
+        self.assertEqual(response.status_code, 401)
+
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=fake_comment_id)
+        self.assertEqual(response.status_code, 404)
+
+        # Create 10 likes
+        likes_count = 0
+        for i in range(3, 13):
+            like_user = User.objects.filter(username=f'testuser{i}').first()
+            if not user:
+                self.fail("User not found")
+
+            request = factory.post(
+                f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/likes/',
+            )
+            force_authenticate(request, user=like_user)
+            response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+
+            self.assertEqual(response.status_code, 200)
+            data = response.data
+            self.assertTrue('id' in data)
+            self.assertTrue('liked' in data)
+            self.assertTrue('likes_count' in data)
+
+            self.assertTrue(data['liked'])
+            likes_count += 1
+            self.assertEqual(data['likes_count'], likes_count)
+
+        # Check if a notification is created
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='comment-likes',
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+        # Removing a like and creating another like to test if the notification is created again
+        like_user = User.objects.filter(username='testuser3').first()
+        if not user:
+            self.fail("User not found")
+
+        PostCommentLike.objects.filter(
+            post_comment=comment,
+            user=like_user,
+        ).delete()
+
+        likes_count -= 1
+        self.assertEqual(likes_count, 9)
+
+        request = factory.post(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/likes/',
+        )
+        force_authenticate(request, user=like_user)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('id' in data)
+        self.assertTrue('liked' in data)
+        self.assertTrue('likes_count' in data)
+
+        self.assertTrue(data['liked'])
+        likes_count += 1
+        self.assertEqual(data['likes_count'], likes_count)
+
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user,
+            template__subject='comment-likes',
+        )
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)

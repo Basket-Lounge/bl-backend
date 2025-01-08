@@ -5,7 +5,7 @@ from django.views.decorators.cache import cache_page
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
+from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 
@@ -484,8 +484,15 @@ class TeamViewSet(viewsets.ViewSet):
             )
         except PostComment.DoesNotExist:
             return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
-        
-        comment = PostService.like_comment(request, pk, post_id, comment) 
+
+        try: 
+            PostService.like_comment(request, comment) 
+        except CustomError as e:
+            return Response({'error': e.message}, status=e.code)
+        except Exception as e:
+            return Response({'error': 'An error occurred'}, status=HTTP_500_INTERNAL_SERVER_ERROR)
+
+        comment = PostService.get_comment_with_likes_only(request, pk, post_id, comment.id)
         serializer = PostSerializerService.serialize_comment_after_like(comment)
         return Response(serializer.data)
     

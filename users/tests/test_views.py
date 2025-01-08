@@ -1160,6 +1160,13 @@ class UserAPIEndpointTestCase(APITestCase):
         if not user2:
             self.fail("User not found")
 
+        # Create 10 more users
+        for i in range(10):
+            User.objects.create(
+                username=f'testuser{i}',
+                email=f'testuser{i}@email.com'
+            )
+
         factory = APIRequestFactory()
         view = UserViewSet.as_view({'post': 'post_like'})
 
@@ -1176,6 +1183,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 400)
 
         # test a regular user
+        likes_count = 0
+
         request = factory.post(
             f'/api/users/{user2.id}/likes/',
         )
@@ -1187,6 +1196,68 @@ class UserAPIEndpointTestCase(APITestCase):
             user=user,
             liked_user=user2
         ).exists())
+        likes_count += 1
+
+        # test a notification creation via creating 9 more likes
+        for i in range(9):
+            liking_user = User.objects.filter(username=f'testuser{i}').first()
+            if not liking_user:
+                self.fail("User not found")
+
+            request = factory.post(
+                f'/api/users/{user2.id}/likes/',
+            )
+            force_authenticate(request, user=liking_user)
+            response = view(request, pk=user2.id)
+
+            self.assertEqual(response.status_code, 201)
+            self.assertTrue(UserLike.objects.filter(
+                user=liking_user,
+                liked_user=user2
+            ).exists())
+            likes_count += 1
+
+        count = UserLike.objects.filter(
+            liked_user=user2
+        ).count()
+
+        self.assertEqual(count, likes_count)
+
+        # test a notification creation via creating 10th like
+        notification = Notification.objects.filter(
+            template__subject='user-likes',
+            notificationrecipient__recipient=user2,
+            data={
+                'number': count
+            }
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+        # delete and recreate a like to check if notification is not created again
+        UserLike.objects.filter(
+            user=user,
+            liked_user=user2
+        ).delete()
+
+        request = factory.post(
+            f'/api/users/{user2.id}/likes/',
+        )
+        force_authenticate(request, user=user)
+        response = view(request, pk=user2.id)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(UserLike.objects.filter(
+            user=user,
+            liked_user=user2
+        ).exists())
+        
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user2,
+        )
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
 
     def test_delete_like(self):
         user = User.objects.filter(username='testuser').first()

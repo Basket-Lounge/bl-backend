@@ -12,9 +12,13 @@ import pytz
 
 from api.exceptions import AnonymousUserError
 from games.models import Game, LineScore
-from games.serializers import GameSerializer, LineScoreSerializer, PlayerCareerStatisticsSerializer, PlayerStatisticsSerializer
+from games.serializers import (
+    GameSerializer, 
+    LineScoreSerializer, 
+    PlayerCareerStatisticsSerializer, 
+    PlayerStatisticsSerializer
+)
 from games.services import combine_games_and_linescores
-from notification.models import NotificationTemplate
 from notification.services import NotificationService
 from players.models import Player, PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
@@ -35,7 +39,15 @@ from teams.models import (
 )
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.utils import calculate_time
-from users.serializers import PostCommentCreateSerializer, PostCommentReplyCreateSerializer, PostCommentReplySerializer, PostCommentSerializer, PostCommentUpdateSerializer, PostSerializer, PostUpdateSerializer
+from users.serializers import (
+    PostCommentCreateSerializer, 
+    PostCommentReplyCreateSerializer, 
+    PostCommentReplySerializer,
+    PostCommentSerializer, 
+    PostCommentUpdateSerializer, 
+    PostSerializer, 
+    PostUpdateSerializer
+)
 from users.services import create_post_queryset_without_prefetch_for_user
 
 
@@ -1268,14 +1280,23 @@ class PostService:
         return comment.first()
 
     @staticmethod
-    def like_comment(request, pk, post_id, comment):
+    def like_comment(request, comment):
         user = request.user
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
         PostCommentLike.objects.get_or_create(
             user=user,
             post_comment=comment
         )
 
-        return PostService.get_comment_with_likes_only(request, pk, post_id, comment.id)
+        likes_count = PostCommentLike.objects.filter(post_comment=comment).count()
+        if likes_count % 10 == 0 and likes_count != 0:
+            NotificationService.create_notification_for_post_comment_likes(
+                comment, 
+                likes_count, 
+                user
+            )
     
     @staticmethod
     def unlike_comment(request, pk, post_id, comment_id):

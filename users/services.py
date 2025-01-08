@@ -396,6 +396,24 @@ def send_update_to_all_parties_regarding_inquiry(
 
 class UserService:
     @staticmethod
+    def get_user_with_liked_only(user_id: int, requesting_user: User = None) -> User | None:
+        """
+        Get a user with the attribute of "id" and "liked".
+
+        :param user_id: The id of the user to get.
+        :param requesting_user: The user that is requesting the data.
+        """
+
+        user = User.objects.filter(id=user_id).only('id')
+
+        if requesting_user is not None:
+            user = user.annotate(
+                liked=Exists(UserLike.objects.filter(user=requesting_user, liked_user=OuterRef('pk')))
+            )
+
+        return user.first()
+
+    @staticmethod
     def get_user_by_id(user_id):
         return User.objects.filter(id=user_id).select_related(
             'role'
@@ -409,7 +427,16 @@ class UserService:
     
 
     @staticmethod
-    def get_user_with_liked_by_id(request, user_id):
+    def get_user_with_liked_by_id(user_id: int, requesting_user: User = None) -> User | None:
+        """
+        Get a user with the attribute of "id" and "liked".
+
+        :param user_id: The id of the user to get.
+        :param requesting_user: The user that is requesting the data.
+
+        :return: The user object.
+        """
+
         user = User.objects.select_related('role').only(
             'username', 
             'role', 
@@ -427,9 +454,9 @@ class UserService:
             )
         ).filter(id=user_id)
 
-        if request.user.is_authenticated:
+        if not requesting_user is None and requesting_user.is_authenticated:
             user = user.annotate(
-                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
+                liked=Exists(UserLike.objects.filter(user=requesting_user, liked_user=OuterRef('pk')))
             )
 
         return user.first()
@@ -448,38 +475,42 @@ class UserService:
         return serializer
     
     @staticmethod
-    def create_user_like(request, pk, user: User, user_to_like: User):
+    def create_user_like(user: User, user_to_like: User) -> int:
         '''
-        Create a like for a user, and return the liked user with the attribute of "id" and "liked".
+        Create a like for a user
+
+        Args:
+        user (User): The user that is liking
+        user_to_like (User): The user that is being liked
+
+        Returns:
+        count (int): The number of likes
         '''
+
         UserLike.objects.get_or_create(user=user, liked_user=user_to_like)
-        liked_user = User.objects.filter(id=pk).only('id')
+        count = UserLike.objects.filter(liked_user=user_to_like).count()
 
-        if request.user.is_authenticated:
-            liked_user = liked_user.annotate(
-                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
-            )
-
-        return liked_user.first()
+        return count
     
     @staticmethod
-    def delete_user_like(request, pk, user: User, user_to_unlike: User):
-        try:
-            UserLike.objects.get(user=user, liked_user=user_to_unlike).delete()
-        except UserLike.DoesNotExist:
-            pass
+    def delete_user_like(user: User, user_to_unlike: User):
+        '''
+        Delete a like for a user
+        '''
 
-        unliked_user = User.objects.filter(id=pk).only('id')
-        if request.user.is_authenticated:
-            unliked_user = unliked_user.annotate(
-                liked=Exists(UserLike.objects.filter(user=request.user, liked_user=OuterRef('pk')))
-            )
-
-        return unliked_user.first()
+        UserLike.objects.filter(user=user, liked_user=user_to_unlike).delete()
 
 class UserSerializerService:
     @staticmethod
-    def serialize_user(user):
+    def serialize_user(user: User) -> UserSerializer:
+        """
+        Serialize a user object with the fields that are allowed to be seen by the owner of the account.
+
+        :param user: The user object to serialize.
+
+        :return: The UserSerializer object. 
+        """
+
         return UserSerializer(
             user,
             fields=(
@@ -503,21 +534,35 @@ class UserSerializerService:
         )
     
     @staticmethod
-    def serialize_another_user(user):
+    def serialize_another_user(user: User, requesting_user: User = None) -> UserSerializer:
+        """
+        Serialize a user object with the fields that are allowed to be seen by another user.
+
+        :param user: The user object to serialize.
+        :param requesting_user: The user that is requesting the data.
+
+        :return: The UserSerializer object.
+        """
+
+        fields = [
+            'id',
+            'username',
+            'role_data',
+            'level',
+            'introduction',
+            'created_at',
+            'is_profile_visible',
+            'chat_blocked',
+            'likes_count',
+            'favorite_team',
+        ]
+
+        if requesting_user is not None and requesting_user.is_authenticated:
+            fields.append('liked')
+
         return UserSerializer(
             user,
-            fields=(
-                'id',
-                'username', 
-                'role_data',
-                'level',
-                'introduction',
-                'created_at',
-                'is_profile_visible',
-                'chat_blocked',
-                'likes_count',
-                'favorite_team',
-            ),
+            fields=fields,
             context={
                 'team': {
                     'fields': ['id', 'symbol']
