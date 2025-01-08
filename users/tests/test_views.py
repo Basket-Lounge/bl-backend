@@ -1926,9 +1926,11 @@ class JWTViewSetTestCase(APITestCase):
         self.assertTrue('username' in data)
         self.assertTrue('email' in data)
         self.assertTrue('id' in data)
+        self.assertTrue('role' in data)
         self.assertEqual(data['username'], user.username)
         self.assertEqual(data['email'], user.email)
         self.assertEqual(data['id'], user.id)
+        self.assertEqual(data['role'], user.role.weight)
 
         response_cookies : cookies.SimpleCookie = response.cookies
         refresh_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_REFRESH_TOKEN_COOKIE', 'refresh')
