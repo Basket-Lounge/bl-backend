@@ -13,6 +13,7 @@ from teams.models import TeamName
 
 # Create your views here.
 class PlayersViewSet(viewsets.ViewSet):
+    @method_decorator(cache_page(60 * 60 * 24))
     @action(detail=False, methods=['get'], url_path='top-10')
     def get_top_10_players(self, request):
         top_players = Player.objects.filter(

@@ -13,18 +13,21 @@ from api.paginators import CustomPageNumberPagination
 from management.serializers import (
     InquiryCreateSerializer, 
 )
-from management.services import ( 
-    InquiryModeratorService,
-    InquirySerializerService,
-    InquiryService,
-    PostManagementSerializerService,
-    PostManagementService,
-    ReportSerializerService,
-    ReportService,
-    UserManagementSerializerService,
+
+from management.services.models_services import (
     UserManagementService,
+    PostManagementService,
+    InquiryService,
+    InquiryModeratorService,
+    ReportService,
     filter_and_fetch_inquiries_in_desc_order_based_on_updated_at,
-    filter_and_fetch_inquiry,
+    filter_and_fetch_inquiry
+)
+from management.services.serializers_services import (
+    PostManagementSerializerService,
+    UserManagementSerializerService,
+    InquirySerializerService,
+    ReportSerializerService,
     send_inquiry_notification_to_all_channels_for_moderators,
     send_inquiry_notification_to_specific_moderator,
     send_inquiry_notification_to_user,
@@ -35,6 +38,7 @@ from management.services import (
     serialize_report,
     serialize_reports
 )
+
 from management.tasks import broadcast_inquiry_updates_to_all_parties
 from teams.models import  PostComment
 from teams.services import PostSerializerService, PostService, TeamSerializerService, TeamService

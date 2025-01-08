@@ -6,22 +6,31 @@ from api.websocket import send_message_to_centrifuge
 from games.models import Game, GameChat, GameChatMessage, LineScore, TeamStatistics
 
 from django.db.models import Prefetch, Q
+from django.db.models.manager import BaseManager
 
 from games.serializers import GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
 from players.models import Player, PlayerStatistics
-from teams.models import TeamLike, TeamName
+from teams.models import TeamLike, TeamName, Team
 
 from rest_framework.status import (
     HTTP_400_BAD_REQUEST, 
     HTTP_404_NOT_FOUND, 
     HTTP_500_INTERNAL_SERVER_ERROR
 )
-
+from typing import Tuple
 from users.utils import validate_websocket_subscription_token
 
 
-def get_today_games():
-    ## get today's date in UTC and then convert back to EST
+def get_today_games() -> Tuple[BaseManager[Game], BaseManager[LineScore]]:
+    """
+    Get today's games and their linescores.
+    The game time is in EST.
+
+    Returns:
+    - games: queryset of games
+    - linescores: queryset of linescores
+    """
+
     date : datetime = datetime.now(pytz.utc)
 
     games = Game.objects.filter(
@@ -55,8 +64,14 @@ def get_today_games():
 
     return games, linescores
 
-def combine_games_and_linescores(games, linescores):
-    ## create a dictionary of games with linescores
+def combine_games_and_linescores(games, linescores) -> List[dict]:
+    """
+    Combine games and linescores into a single dictionary.
+
+    Returns:
+    - games: list of games with linescores
+    """
+
     for linescore in linescores:
         for game in games:
             if game['game_id'] == linescore['game']['game_id']:
@@ -71,8 +86,14 @@ def combine_games_and_linescores(games, linescores):
 
     return games
 
-def combine_game_and_linescores(game, linescores):
-    ## create a dictionary of games with linescores
+def combine_game_and_linescores(game, linescores) -> dict:
+    """
+    Combine a single game and its linescores into a single dictionary.
+
+    Returns:
+    - game: game with linescores
+    """
+
     for linescore in linescores:
         if game['game_id'] == linescore['game']['game_id']:
             linescore_copy = linescore.copy()
@@ -87,12 +108,16 @@ def combine_game_and_linescores(game, linescores):
     return game
 
 def update_live_scores(
-    game,
-    team,
-    linescore,
-    players,
-    statistics
-):
+    game: Game,
+    team: Team,
+    linescore: List[dict],
+    players: List[dict],
+    statistics: dict
+) -> None:
+    """
+    Update the live scores of a game.
+    """
+
     team_linescore = LineScore.objects.get(game=game, team=team)
     for index in range(len(linescore)):
         if index == 0:
@@ -244,7 +269,11 @@ def update_live_scores(
         )
 
 
-def update_team_statistics(game, team, statistics):
+def update_team_statistics(game, team, statistics) -> None:
+    """
+    Update the team statistics of a game.
+    """
+
     TeamStatistics.objects.update_or_create(
         team=team,
         game=game,
@@ -316,12 +345,15 @@ def create_game_queryset_without_prefetch(
     request, 
     fields_only=[], 
     **kwargs
-):
+) -> BaseManager[Game]:
     """
     Create a queryset for the Game model without prefetching and selecting related models.\n
     - request: request object.\n
     - fields_only: list of fields to return in the queryset.\n
     - **kwargs: keyword arguments to filter
+
+    Returns:
+    - queryset: queryset of games
     """
 
     if kwargs is not None:

@@ -41,6 +41,7 @@ class Role(models.Model):
 
 
 class User(AbstractBaseUser):
+    id = models.BigAutoField(primary_key=True)
     role = models.ForeignKey(
         Role, 
         on_delete=models.PROTECT,
@@ -55,6 +56,7 @@ class User(AbstractBaseUser):
     experience = models.IntegerField(default=0)
     introduction = models.TextField(blank=True)
     chat_blocked = models.BooleanField(default=False)
+    login_notification_enabled = models.BooleanField(default=False)
     is_profile_visible = models.BooleanField(
         default=True,
         verbose_name='Profile visibility'
@@ -102,12 +104,6 @@ class User(AbstractBaseUser):
             level += 1
 
         return level - 1
-
-    # @property
-    # def is_staff(self):
-    #     "Is the user a member of staff?"
-    #     # Simplest possible answer: All admins are staff
-    #     return self.is_staff
 
     USERNAME_FIELD = 'username'
     EMAIL_FIELD = 'email'

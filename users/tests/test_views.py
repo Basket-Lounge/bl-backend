@@ -9,6 +9,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.utils import MockResponse
 from games.models import Game
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
+from notification.models import Notification, NotificationTemplate
+from notification.services.models_services import NotificationService
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.services import UserChatService
@@ -1158,6 +1160,13 @@ class UserAPIEndpointTestCase(APITestCase):
         if not user2:
             self.fail("User not found")
 
+        # Create 10 more users
+        for i in range(10):
+            User.objects.create(
+                username=f'testuser{i}',
+                email=f'testuser{i}@email.com'
+            )
+
         factory = APIRequestFactory()
         view = UserViewSet.as_view({'post': 'post_like'})
 
@@ -1174,6 +1183,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 400)
 
         # test a regular user
+        likes_count = 0
+
         request = factory.post(
             f'/api/users/{user2.id}/likes/',
         )
@@ -1185,6 +1196,68 @@ class UserAPIEndpointTestCase(APITestCase):
             user=user,
             liked_user=user2
         ).exists())
+        likes_count += 1
+
+        # test a notification creation via creating 9 more likes
+        for i in range(9):
+            liking_user = User.objects.filter(username=f'testuser{i}').first()
+            if not liking_user:
+                self.fail("User not found")
+
+            request = factory.post(
+                f'/api/users/{user2.id}/likes/',
+            )
+            force_authenticate(request, user=liking_user)
+            response = view(request, pk=user2.id)
+
+            self.assertEqual(response.status_code, 201)
+            self.assertTrue(UserLike.objects.filter(
+                user=liking_user,
+                liked_user=user2
+            ).exists())
+            likes_count += 1
+
+        count = UserLike.objects.filter(
+            liked_user=user2
+        ).count()
+
+        self.assertEqual(count, likes_count)
+
+        # test a notification creation via creating 10th like
+        notification = Notification.objects.filter(
+            template__subject='user-likes',
+            notificationrecipient__recipient=user2,
+            data={
+                'number': count
+            }
+        )
+
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
+
+        # delete and recreate a like to check if notification is not created again
+        UserLike.objects.filter(
+            user=user,
+            liked_user=user2
+        ).delete()
+
+        request = factory.post(
+            f'/api/users/{user2.id}/likes/',
+        )
+        force_authenticate(request, user=user)
+        response = view(request, pk=user2.id)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(UserLike.objects.filter(
+            user=user,
+            liked_user=user2
+        ).exists())
+        
+        notification = Notification.objects.filter(
+            notificationrecipient__recipient=user2,
+        )
+        self.assertTrue(notification.exists())
+        self.assertEqual(notification.count(), 1)
 
     def test_delete_like(self):
         user = User.objects.filter(username='testuser').first()
@@ -1516,6 +1589,292 @@ class UserAPIEndpointTestCase(APITestCase):
         response = view(request, inquiry_id=inquiry.id)
         self.assertEqual(response.status_code, 400)
 
+    def test_get_notifications(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 0)
+        self.assertEqual(data['results'], [])
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        # Create a notification
+        team = Team.objects.all().first()
+        post = Post.objects.create(
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user,
+            title='Test post',
+            content='Test content'
+        )
+        post_comment = PostComment.objects.create(
+            post=post,
+            user=user2,
+            content='Test comment',
+            status=PostCommentStatus.objects.get(name='created')
+        )
+
+        template = NotificationTemplate.objects.get(
+            subject='post-comment'
+        )
+        notification = NotificationService.create_notification(
+            template=template,
+        )
+        NotificationService.create_notification_actor(
+            notification=notification,
+            actors=[user2, team, post, post_comment]
+        )
+        NotificationService.create_notification_recipient(
+            notification=notification,
+            recipient=user
+        )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+
+        notification = data['results'][0]
+
+        self.assertTrue('id' in notification)
+        self.assertTrue('created_at' in notification)
+        self.assertTrue('updated_at' in notification)
+        self.assertTrue('picture_url' in notification)
+        self.assertTrue('redirect_url' in notification)
+        self.assertTrue('recipients' in notification)
+        self.assertTrue('contents' in notification)
+
+        self.assertEqual(len(notification['recipients']), 1)
+        self.assertEqual(notification['recipients'][0]['recipient_data']['username'], user.username)
+        self.assertEqual(len(notification['contents']), 2)
+        self.assertEqual(notification['picture_url'], None)
+        self.assertIsNotNone(notification['redirect_url'])
+
+        TeamLike.objects.create(
+            team=team,
+            user=user2,
+            favorite=True
+        )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(len(data['results']), 1)
+
+        notification = data['results'][0]
+
+        self.assertTrue('id' in notification)
+        self.assertTrue('created_at' in notification)
+        self.assertTrue('updated_at' in notification)
+        self.assertTrue('picture_url' in notification)
+        self.assertTrue('redirect_url' in notification)
+        self.assertTrue('recipients' in notification)
+        self.assertTrue('contents' in notification)
+
+        self.assertEqual(len(notification['recipients']), 1)
+        self.assertEqual(notification['recipients'][0]['recipient_data']['username'], user.username)
+        self.assertEqual(notification['recipients'][0]['read'], False)
+
+        self.assertIsNotNone(notification['picture_url'])
+        self.assertIsNotNone(notification['redirect_url'])
+
+        # Create 10 more notifications
+        for i in range(10):
+            notification = NotificationService.create_notification(
+                template=template,
+            )
+            NotificationService.create_notification_actor(
+                notification=notification,
+                actors=[user2, team, post, post_comment]
+            )
+            NotificationService.create_notification_recipient(
+                notification=notification,
+                recipient=user
+            )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 3)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+    def test_delete_notifications(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'delete': 'delete_notifications'})
+
+        # create a notification
+        team = Team.objects.all().first()
+        post = Post.objects.create(
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user,
+            title='Test post',
+            content='Test content'
+        )
+        post_comment = PostComment.objects.create(
+            post=post,
+            user=user2,
+            content='Test comment',
+            status=PostCommentStatus.objects.get(name='created')
+        )
+
+        template = NotificationTemplate.objects.get(
+            subject='post-comment'
+        )
+        notification = NotificationService.create_notification(
+            template=template,
+        )
+        NotificationService.create_notification_actor(
+            notification=notification,
+            actors=[user2, team, post, post_comment]
+        )
+        NotificationService.create_notification_recipient(
+            notification=notification,
+            recipient=user
+        )
+
+        # test an anonymous user
+        request = factory.delete(
+            f'/api/users/me/notifications/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+        
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+
+    def test_mark_notifications_as_read(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'patch': 'mark_notifications_as_read'})
+
+        # create a notification
+        team = Team.objects.all().first()
+        post = Post.objects.create(
+            status=PostStatus.objects.get(name='created'),
+            team=team,
+            user=user,
+            title='Test post',
+            content='Test content'
+        )
+        post_comment = PostComment.objects.create(
+            post=post,
+            user=user2,
+            content='Test comment',
+            status=PostCommentStatus.objects.get(name='created')
+        )
+
+        template = NotificationTemplate.objects.get(
+            subject='post-comment'
+        )
+
+        for i in range(10):
+            notification = NotificationService.create_notification(
+                template=template,
+            )
+            NotificationService.create_notification_actor(
+                notification=notification,
+                actors=[user2, team, post, post_comment]
+            )
+            NotificationService.create_notification_recipient(
+                notification=notification,
+                recipient=user
+            )
+
+        # test an anonymous user
+        request = factory.patch(
+            f'/api/users/me/notifications/',
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+        force_authenticate(request, user=user)
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 10)
+        self.assertEqual(len(data['results']), 3)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+        for notification in data['results']:
+            self.assertTrue('id' in notification)
+            self.assertTrue('created_at' in notification)
+            self.assertTrue('updated_at' in notification)
+            self.assertTrue('picture_url' in notification)
+            self.assertTrue('redirect_url' in notification)
+            self.assertTrue('recipients' in notification)
+            self.assertTrue('contents' in notification)
+
+            self.assertEqual(len(notification['recipients']), 1)
+            self.assertEqual(notification['recipients'][0]['recipient_data']['username'], user.username)
+            self.assertEqual(notification['recipients'][0]['read'], True)
+            self.assertEqual(len(notification['contents']), 2)
+            self.assertEqual(notification['picture_url'], None)
+
 
 class JWTViewSetTestCase(APITestCase):
     def setUp(self):
@@ -1567,9 +1926,11 @@ class JWTViewSetTestCase(APITestCase):
         self.assertTrue('username' in data)
         self.assertTrue('email' in data)
         self.assertTrue('id' in data)
+        self.assertTrue('role' in data)
         self.assertEqual(data['username'], user.username)
         self.assertEqual(data['email'], user.email)
         self.assertEqual(data['id'], user.id)
+        self.assertEqual(data['role'], user.role.weight)
 
         response_cookies : cookies.SimpleCookie = response.cookies
         refresh_token_cookie_key = settings.SIMPLE_JWT.get('AUTH_REFRESH_TOKEN_COOKIE', 'refresh')

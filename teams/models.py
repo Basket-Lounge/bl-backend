@@ -208,6 +208,18 @@ class PostCommentReplyStatus(models.Model):
 
     def __str__(self):
         return self.name
+    
+class PostCommentReplyStatusDisplayName(models.Model):
+    id = models.SmallAutoField(primary_key=True)
+    post_comment_reply_status = models.ForeignKey(PostCommentReplyStatus, on_delete=models.CASCADE)
+    language = models.ForeignKey(Language, on_delete=models.CASCADE)
+    display_name = models.CharField(max_length=128)
+
+    def __str__(self):
+        return f'{self.post_comment_reply_status.name} - {self.language.name}'
+    
+    class Meta:
+        unique_together = ['post_comment_reply_status', 'language']
 
 class PostCommentReply(models.Model):
     id = models.UUIDField(

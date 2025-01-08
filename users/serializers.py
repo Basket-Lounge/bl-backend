@@ -18,6 +18,8 @@ from teams.models import Post, PostComment, PostCommentReply, PostCommentReplySt
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamLikeSerializer, TeamSerializer
 from users.models import Role, UserChat, UserChatParticipant, UserChatParticipantMessage
 
+from notification.services.models_services import NotificationService
+
 
 class CustomSocialLoginSerializer(SocialLoginSerializer):
     def get_social_login(self, adapter, app, token, response):
@@ -117,6 +119,10 @@ class CustomSocialLoginSerializer(SocialLoginSerializer):
 
             login.lookup()
             login.save(request, connect=True)
+
+        ## Add Notification For login
+        if login.account.user.login_notification_enabled:
+            NotificationService.create_notification_for_login(login.account.user)
 
         attrs['user'] = login.account.user
         return attrs
@@ -385,6 +391,33 @@ class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeria
         return obj.liked
     
 
+class PostCommentCreateSerializer(serializers.Serializer):
+    content = serializers.CharField(min_length=1, max_length=8192)
+    
+    def create(self, validated_data):
+        with transaction.atomic():
+            status = PostCommentStatus.objects.get(name='created')
+            post = validated_data.get('post', None)
+            user = validated_data.get('user', None)
+            content = validated_data.get('content', None)
+
+            if post is None:
+                raise serializers.ValidationError('Post is required')
+
+            if user is None: 
+                raise serializers.ValidationError('User is required')
+
+            if content is None:
+                raise serializers.ValidationError('Content is required')
+
+            return PostComment.objects.create(
+                post=post,
+                user=user,
+                status=status,
+                content=content
+            )
+    
+
 class PostCommentUpdateSerializer(serializers.Serializer):
     content = serializers.CharField(min_length=1)
     status = serializers.IntegerField()
@@ -455,6 +488,31 @@ class PostCommentReplySerializer(DynamicFieldsSerializerMixin, serializers.Model
             **context    
         )
         return serializer.data
+
+
+class PostCommentReplyCreateSerializer(serializers.Serializer):
+    content = serializers.CharField(min_length=1, max_length=8192)
+    
+    def create(self, validated_data):
+        with transaction.atomic():
+            post_comment = validated_data.get('post_comment', None)
+            user = validated_data.get('user', None)
+            content = validated_data.get('content', None)
+
+            if post_comment is None:
+                raise serializers.ValidationError('Post comment is required')
+
+            if user is None: 
+                raise serializers.ValidationError('User is required')
+
+            if content is None:
+                raise serializers.ValidationError('Content is required')
+
+            return PostCommentReply.objects.create(
+                post_comment=post_comment,
+                user=user,
+                content=content
+            )
 
 
 class UserChatParticipantMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
