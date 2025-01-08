@@ -675,7 +675,8 @@ class JWTViewSet(ViewSet):
         response = Response(status=HTTP_201_CREATED, data={
             'username': request.user.username,
             'email': request.user.email,
-            'id': request.user.id
+            'id': request.user.id,
+            'role': request.user.role.weight
         })
         response.delete_cookie(refresh_token_cookie_key)
         response.delete_cookie(access_token_cookie_key)
