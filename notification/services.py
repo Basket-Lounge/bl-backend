@@ -2,13 +2,20 @@ from datetime import datetime
 from typing import List, Union
 from api.exceptions import AnonymousUserError, NotFoundError
 from games.models import Game
-from notification.models import Notification, NotificationActor, NotificationRecipient, NotificationTemplate, NotificationTemplateBody
+from notification.models import (
+    Notification, 
+    NotificationActor, 
+    NotificationRecipient, 
+    NotificationTemplate, 
+    NotificationTemplateBody,
+)
 from notification.serializers import NotificationSerializer
 from players.models import Player
 from teams.models import Post, PostComment, PostCommentReply, Team, TeamLike
 from users.models import User, UserChat
 
 from rest_framework.request import Request
+from django.contrib.auth.models import AnonymousUser
 
 from django.db.models import Prefetch
 from django.db.models.manager import BaseManager
@@ -25,12 +32,17 @@ def create_notification_queryset_without_prefetch(
     request: Request,
     fields_only=[], 
     **kwargs
-):
+) -> BaseManager[Notification]:
     """
     Create a queryset for the Notification model without prefetching related models.\n
-    - request: request object.\n
-    - fields_only: list of fields to return in the queryset.\n
-    - **kwargs: keyword arguments to filter
+
+    Args:
+    request (Request): The request object.
+    fields_only (list): The fields to include in the queryset.
+    **kwargs: The filters to apply to the queryset.
+
+    Returns:
+    QuerySet: The queryset of notifications.
     """
 
     roles_filter : str | None = request.query_params.get('roles', None)
@@ -69,7 +81,18 @@ def create_notification_queryset_without_prefetch(
 
 class NotificationService:
     @staticmethod
-    def create_notification(template: NotificationTemplate, data: dict | None = None):
+    def create_notification(template: NotificationTemplate, data: dict | None = None) -> Notification:
+        """
+        Create a notification.
+
+        Args:
+        template (NotificationTemplate): The template for the notification.
+        data (dict): The data to include in the notification.
+
+        Returns:
+        Notification: The notification that was created.
+        """
+
         notification = Notification.objects.create(
             template=template,
             data=data
@@ -80,7 +103,18 @@ class NotificationService:
     def create_notification_actor(
         notification: Notification, 
         actors: List[Union[User, Post, PostComment, PostCommentReply, Game, Player, Team, UserChat]]
-    ):
+    ) -> NotificationActor:
+        """
+        Create a notification actor.
+
+        Args:
+        notification (Notification): The notification to send.
+        actors (List[Union[User, Post, PostComment, PostCommentReply, Game, Player, Team, UserChat]]): The actors in the notification.
+
+        Returns:
+        NotificationActor: The notification actor that was created.
+        """
+
         filtered_actors = {}
         actor_model = {
             User: 'user',
@@ -106,18 +140,40 @@ class NotificationService:
         return actor
     
     @staticmethod
-    def create_notification_recipient(notification: Notification, recipient: User):
+    def create_notification_recipient(notification: Notification, recipient: User) -> NotificationRecipient:
+        """
+        Create a notification recipient.
+
+        Args:
+        notification (Notification): The notification to send.
+        recipient (User): The user to send the notification to.
+
+        Returns:
+        NotificationRecipient: The notification recipient that was created.
+        """
+
         recipient = NotificationRecipient.objects.create(
             notification=notification,
             recipient=recipient
         )
+
         return recipient
     
     @staticmethod
-    def get_user_notifications(request: Request, user: User):
+    def get_user_notifications_with_request(request: Request) -> BaseManager[Notification]:
+        '''
+        Get the notifications for a user.
+
+        Args:
+        request (Request): The request object.
+
+        Returns:
+        BaseManager[Notification]: The QuerySet of notifications.
+        '''
+
         notifications = create_notification_queryset_without_prefetch(
             request,
-            notificationrecipient__recipient=user,
+            notificationrecipient__recipient=request.user,
             notificationrecipient__deleted=False
         ).select_related(
             'template',
@@ -160,7 +216,18 @@ class NotificationService:
         return notifications
     
     @staticmethod
-    def get_user_unread_notifications(request: Request):
+    def get_user_unread_notifications_with_request(request: Request) -> BaseManager[Notification]:
+        '''
+        Get the unread notifications for a user. 
+        Requires the request object for dynamically filtering the queryset.
+
+        Args:
+        request (Request): The request object.
+
+        Returns:
+        BaseManager[Notification]: The QuerySet of unread notifications.
+        '''
+
         if not request.user.is_authenticated:
             raise ValueError('User is not authenticated')
         
@@ -210,38 +277,52 @@ class NotificationService:
         return notifications
     
     @staticmethod
-    def get_user_unread_notifications_count(request: Request):
-        user = request.user
-        if not request.user.is_authenticated:
-            raise ValueError('User is not authenticated')
-        
-        notification_count = create_notification_queryset_without_prefetch(
-            request,
+    def get_user_unread_notifications_count(user: User) -> int:
+        '''
+        Get the number of unread notifications for a user.
+
+        Args:
+        user (User): The user to get the notifications for.
+
+        Returns:
+        int: The number of unread notifications.
+        '''
+
+        if user == AnonymousUser:
+            raise AnonymousUserError()
+
+        return Notification.objects.filter(
             notificationrecipient__recipient=user,
             notificationrecipient__read=False
         ).count()
-
-        return notification_count
     
     @staticmethod
-    def delete_user_notifications(request: Request):
-        if not request.user.is_authenticated:
-            raise AnonymousUserError()
+    def delete_user_notifications(user: User) -> None:
+        """
+        Delete a user's notifications.
+
+        Args:
+        user (User): The user who received the notifications.
+        """
 
         NotificationRecipient.objects.filter(
-            recipient=request.user
+            recipient=user
         ).update(
             deleted=True,
             deleted_at=datetime.now()
         ) 
 
     @staticmethod
-    def mark_user_notifications_as_read(request: Request):
-        if not request.user.is_authenticated:
-            raise AnonymousUserError()
+    def mark_user_notifications_as_read(user: User) -> None:
+        """
+        Mark a user's notifications as read.
+
+        Args:
+        user (User): The user who received the notifications.
+        """
 
         NotificationRecipient.objects.filter(
-            recipient=request.user,
+            recipient=user,
             read=False
         ).update(
             read=True,
@@ -250,16 +331,23 @@ class NotificationService:
 
     @staticmethod
     def get_user_notification_by_id(
-        request: Request,
-        notification_id: str
-    ):
-        if not request.user.is_authenticated:
-            raise ValueError('User is not authenticated')
+        notification_id: str,
+        user: User
+    ) -> Notification | None:
+        """
+        Get a user's notification by ID.
 
-        notification = create_notification_queryset_without_prefetch(
-            request,
+        Args:
+        notification_id (str): The ID of the notification.
+        user (User): The user who received the notification.
+
+        Returns:
+        Notification | None: The notification if it exists, None otherwise.
+        """
+
+        notification = Notification.objects.filter(
             id=notification_id,
-            notificationrecipient__recipient=request.user
+            notificationrecipient__recipient=user
         ).select_related(
             'template',
             'template__type'
@@ -301,59 +389,29 @@ class NotificationService:
         return notification
     
     @staticmethod
-    def check_if_notification_exists_by_various_criteria(**kwargs):
+    def check_if_notification_exists_by_various_criteria(**kwargs) -> bool:
+        """
+        Check if a notification exists by various criteria.
+
+        Args:
+        **kwargs: The criteria to check.
+
+        Returns:
+        bool: True if the notification exists, False otherwise.
+        """
+
         return Notification.objects.filter(**kwargs).exists()
     
     @staticmethod
-    def check_if_notification_exists_by_template_subject_and_data(
-        template_subject: str,
-        data: dict,
-        recipient: User
-    ):
-        return Notification.objects.filter(
-            data=data,
-            template__subject=template_subject,
-            notificationrecipient__recipient=recipient
-        ).select_related(
-            'template',
-            'template__type'
-        ).prefetch_related(
-            Prefetch(
-                'notificationactor_set',
-                queryset=NotificationActor.objects.select_related(
-                    'user',
-                    'post',
-                    'comment',
-                    'reply',
-                    'game',
-                    'player',
-                    'team',
-                    'chat'
-                ).prefetch_related(
-                    Prefetch(
-                        'user__teamlike_set',
-                        queryset=TeamLike.objects.select_related(
-                            'team'
-                        )
-                    ),
-                )
-            ),
-            Prefetch(
-                'notificationrecipient_set',
-                queryset=NotificationRecipient.objects.select_related(
-                    'recipient'
-                )
-            ),
-            Prefetch(
-                'template__notificationtemplatebody_set',
-                queryset=NotificationTemplateBody.objects.select_related(
-                    'language'
-                )
-            )
-        ).exists()
-    
-    @staticmethod
-    def create_notification_for_post_like(post: Post, number_of_likes: int):
+    def create_notification_for_post_like(post: Post, number_of_likes: int) -> None:
+        """
+        Create a notification for how many likes a post has.
+
+        Args:
+        post (Post): The post that was liked.
+        number_of_likes (int): The number of likes the post has.
+        """
+
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
             template__subject='post-likes',
             notificationactor__post=post,
@@ -383,7 +441,18 @@ class NotificationService:
         )
 
     @staticmethod
-    def create_notification_for_post_comment(post: Post, user: User):
+    def create_notification_for_post_comment(post: Post, user: User) -> Notification:
+        """
+        Create a notification for a comment on a post.
+
+        Args:
+        post (Post): The post that was commented on.
+        user (User): The user who commented.
+
+        Returns:
+        Notification: The notification that was created.
+        """
+
         if post.user == user:
             return
 
@@ -411,10 +480,24 @@ class NotificationService:
             post.user
         )
 
+        return notification
+
     @staticmethod
-    def create_notification_for_post_comment_reply(reply: PostCommentReply, replies_count: int, user: User):
+    def create_notification_for_post_comment_reply(
+        reply: PostCommentReply, 
+        replies_count: int, 
+        user: User
+    ) -> Notification:
         """
         Create a notification for how many replies a comment has.
+
+        Args:
+        reply (PostCommentReply): The reply that was made.
+        replies_count (int): The number of replies the comment has.
+        user (User): The user who made the reply.
+
+        Returns:
+        Notification: The notification that was created.
         """
 
         if reply.post_comment.user == user:
@@ -424,7 +507,6 @@ class NotificationService:
             template__subject='comment-replies',
             data={ 'number': replies_count },
             notificationactor__comment=reply.post_comment,
-            notificationactor__user=user
         )
 
         if existence:
@@ -448,12 +530,29 @@ class NotificationService:
             reply.post_comment.user
         )
 
-    def create_notification_for_post_comment_likes(post_comment: PostComment, number_of_likes: int):
+        return notification
+
+    def create_notification_for_post_comment_likes(
+        post_comment: PostComment, 
+        number_of_likes: int, 
+        user: User
+    ) -> Notification:
+        """
+        Create a notification for how many likes a comment has.
+
+        Args:
+        post_comment (PostComment): The comment that was liked.
+        number_of_likes (int): The number of likes the comment has.
+        user (User): The user who liked the comment.
+
+        Returns:
+        Notification: The notification that was created.
+        """
+
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
             template__subject='comment-likes',
             notificationactor__comment=post_comment,
             data={ 'number': number_of_likes },
-            notificationrecipient__recipient=post_comment.user
         )
 
         if existence:
@@ -469,7 +568,7 @@ class NotificationService:
 
         NotificationService.create_notification_actor(
             notification,
-            [post_comment, post_comment.post, post_comment.post.team]
+            [post_comment, post_comment.post, post_comment.post.team, user]
         )
 
         NotificationService.create_notification_recipient(
@@ -477,16 +576,100 @@ class NotificationService:
             post_comment.user
         )
 
+        return notification
+
+    @staticmethod
+    def create_notification_for_user_likes(
+        user: User, 
+        liked_user: User, 
+        number_of_likes: int
+    ) -> Notification:
+        """
+        Create a notification for how many likes a user has.
+
+        Args:
+        user (User): The user who liked the other user.
+        liked_user (User): The user who was liked.
+        number_of_likes (int): The number of likes the user has.
+
+        Returns:
+        Notification: The notification that was created.
+        """
+
+        existence = NotificationService.check_if_notification_exists_by_various_criteria(
+            template__subject='user-likes',
+            data={ 'number': number_of_likes },
+            notificationrecipient__recipient=liked_user
+        )
+
+        if existence:
+            return
+
+        template = NotificationTemplate.objects.get(subject='user-likes')
+        notification = NotificationService.create_notification(
+            template,
+            data={
+                'number': number_of_likes
+            }
+        )
+
+        NotificationService.create_notification_actor(
+            notification,
+            [user]
+        )
+
+        NotificationService.create_notification_recipient(
+            notification,
+            liked_user
+        )
+
+        return notification
+    
+    def create_notification_for_login(
+        user: User
+    ) -> Notification:
+        """
+        Create a notification for when a user logs in.
+
+        Args:
+        user (User): The user who logged in.
+
+        Returns:
+        Notification: The notification that was created.
+        """
+
+        template = NotificationTemplate.objects.get(subject='user-login')
+        notification = NotificationService.create_notification(
+            template
+        )
+
+        NotificationService.create_notification_actor(
+            notification,
+            [user]
+        )
+
+        NotificationService.create_notification_recipient(
+            notification,
+            user
+        )
+
+        return notification
+
     @staticmethod
     def mark_user_notification_as_read(
-        request: Request,
-        notification_id: str
-    ):
-        if not request.user.is_authenticated:
-            raise AnonymousUserError()
+        notification_id: str,
+        user: User
+    ) -> None:
+        """
+        Mark a user's notification as read.
+
+        Args:
+        notification_id (str): The ID of the notification.
+        user (User): The user who received the notification.
+        """
 
         queryset = NotificationRecipient.objects.filter(
-            recipient=request.user,
+            recipient=user,
             notification__id=notification_id
         )
 
@@ -500,14 +683,19 @@ class NotificationService:
     
     @staticmethod
     def delete_user_notification(
-        request: Request,
-        notification_id: str
-    ):
-        if not request.user.is_authenticated:
-            raise AnonymousUserError()
-        
+        notification_id: str,
+        user: User
+    ) -> None:
+        """
+        Delete a user's notification.
+
+        Args:
+        notification_id (str): The ID of the notification.
+        user (User): The user who received the notification.
+        """
+
         queryset = NotificationRecipient.objects.filter(
-            recipient=request.user,
+            recipient=user,
             notification__id=notification_id
         )
 
@@ -521,7 +709,14 @@ class NotificationService:
 
 class NotificationSerializerService:
     @staticmethod
-    def serialize_notifications(notifications: BaseManager[Notification]):
+    def serialize_notifications(notifications: BaseManager[Notification]) -> NotificationSerializer:
+        """
+        Serialize a queryset of notifications.
+
+        Args:
+        notifications (BaseManager[Notification]): The queryset of notifications.
+        """
+
         return NotificationSerializer(
             notifications, 
             fields_exclude=[
@@ -587,7 +782,14 @@ class NotificationSerializerService:
         )
     
     @staticmethod
-    def serialize_notification(notification: Notification):
+    def serialize_notification(notification: Notification) -> NotificationSerializer:
+        """
+        Serialize a single notification.
+
+        Args:
+        notification (Notification): The notification to serialize.
+        """
+
         return NotificationSerializer(
             notification,
             fields_exclude=[

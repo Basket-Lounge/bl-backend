@@ -1,6 +1,12 @@
 from rest_framework.test import APITestCase
 
-from notification.models import Notification, NotificationActor, NotificationRecipient, NotificationTemplate, NotificationTemplateBody
+from notification.models import (
+    Notification, 
+    NotificationActor, 
+    NotificationRecipient, 
+    NotificationTemplate, 
+    NotificationTemplateBody
+)
 from notification.serializers import NotificationSerializer
 from teams.models import Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike
 from users.models import User

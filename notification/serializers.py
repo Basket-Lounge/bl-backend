@@ -2,10 +2,23 @@ import re
 from rest_framework import serializers
 from api.mixins import DynamicFieldsSerializerMixin
 from games.serializers import GameSerializer
-from notification.models import Notification, NotificationActor, NotificationRecipient, NotificationTemplate, NotificationTemplateBody, NotificationTemplateType
+from notification.models import (
+    Notification, 
+    NotificationActor, 
+    NotificationRecipient, 
+    NotificationTemplate, 
+    NotificationTemplateBody, 
+    NotificationTemplateType
+)
 from players.serializers import PlayerSerializer
 from teams.serializers import LanguageSerializer, TeamSerializer
-from users.serializers import PostCommentReplySerializer, PostCommentSerializer, PostSerializer, UserChatSerializer, UserSerializer
+from users.serializers import (
+    PostCommentReplySerializer, 
+    PostCommentSerializer, 
+    PostSerializer, 
+    UserChatSerializer, 
+    UserSerializer
+)
 
 from django.conf import settings
 
