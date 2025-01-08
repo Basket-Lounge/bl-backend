@@ -1,7 +1,17 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType, InquiryTypeDisplayName, Report, ReportType, ReportTypeDisplayName
+from management.models import (
+    Inquiry, 
+    InquiryMessage, 
+    InquiryModerator, 
+    InquiryModeratorMessage, 
+    InquiryType, 
+    InquiryTypeDisplayName, 
+    Report, 
+    ReportType, 
+    ReportTypeDisplayName
+)
 from teams.serializers import LanguageSerializer
 from users.models import Role
 from users.serializers import UserSerializer

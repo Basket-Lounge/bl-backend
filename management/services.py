@@ -1,8 +1,29 @@
 from datetime import datetime, timezone
 from typing import List
 from api.websocket import broadcast_message_to_centrifuge, send_message_to_centrifuge
-from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType, InquiryTypeDisplayName, Report, ReportType, ReportTypeDisplayName
-from management.serializers import InquiryModeratorMessageCreateSerializer, InquiryModeratorMessageSerializer, InquiryModeratorSerializer, InquirySerializer, InquiryTypeSerializer, InquiryUpdateSerializer, ReportCreateSerializer, ReportSerializer, ReportTypeSerializer, UserUpdateSerializer
+from management.models import (
+    Inquiry, 
+    InquiryMessage, 
+    InquiryModerator, 
+    InquiryModeratorMessage, 
+    InquiryType, 
+    InquiryTypeDisplayName, 
+    Report, 
+    ReportType, 
+    ReportTypeDisplayName
+)
+from management.serializers import (
+    InquiryModeratorMessageCreateSerializer, 
+    InquiryModeratorMessageSerializer, 
+    InquiryModeratorSerializer, 
+    InquirySerializer, 
+    InquiryTypeSerializer, 
+    InquiryUpdateSerializer, 
+    ReportCreateSerializer, 
+    ReportSerializer, 
+    ReportTypeSerializer, 
+    UserUpdateSerializer
+)
 
 from django.db.models import Prefetch, Q
 from django.db.models.manager import BaseManager
