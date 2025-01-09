@@ -21,7 +21,6 @@ class NotificationSerializerService:
             notifications, 
             fields_exclude=[
                 'actors',
-                'template_data',
                 'data'
             ],
             many=True,
@@ -47,6 +46,15 @@ class NotificationSerializerService:
                 },
                 'notificationrecipient': {
                     'fields': ['read', 'read_at', 'recipient_data']
+                },
+                'notificationtemplate': {
+                    'fields': ['id', 'type_data']
+                },
+                'notificationtemplatetype': {
+                    'fields': ['display_names', 'color_code']
+                },
+                'notificationtemplatetypedisplayname': {
+                    'fields': ['id', 'name', 'language_data']
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -94,12 +102,20 @@ class NotificationSerializerService:
             notification,
             fields_exclude=[
                 'actors',
-                'template_data',
                 'data'
             ],
             context={
                 'language': {
                     'fields': ['id', 'name']
+                },
+                'notificationtemplate': {
+                    'fields': ['id', 'type_data']
+                },
+                'notificationtemplatetype': {
+                    'fields': ['display_names', 'color_code']
+                },
+                'notificationtemplatetypedisplayname': {
+                    'fields': ['id', 'name', 'language_data']
                 },
                 'notificationtemplatebody': {
                     'fields': ['id', 'subject', 'body', 'language_data']

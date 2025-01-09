@@ -8,6 +8,7 @@ from notification.models import (
     NotificationRecipient, 
     NotificationTemplate, 
     NotificationTemplateBody,
+    NotificationTemplateTypeDisplayName,
 )
 from players.models import Player
 from teams.models import Post, PostComment, PostCommentReply, Team, TeamLike
@@ -44,10 +45,6 @@ def create_notification_queryset_without_prefetch(
     QuerySet: The queryset of notifications.
     """
 
-    roles_filter : str | None = request.query_params.get('roles', None)
-    if roles_filter is not None:
-        roles_filter = roles_filter.split(',')
-
     sort_by : str | None = request.query_params.get('sort', None)
     if sort_by is not None:
         sort_by : List[str] = sort_by.split(',')
@@ -64,8 +61,16 @@ def create_notification_queryset_without_prefetch(
     else:
         queryset = Notification.objects.all()
 
-    if roles_filter is not None:
-        queryset = queryset.filter(role__id__in=roles_filter).distinct()
+    types_filter : str | None = request.query_params.get('types', None)
+    if types_filter is not None:
+        unfiltered_types = types_filter.split(',')
+        types_filter = []
+
+        for type in unfiltered_types:
+            types_filter.append(int(type))
+        
+        if types_filter:
+            queryset = queryset.filter(template__type__id__in=types_filter)
 
     if sort_by is not None:
         queryset = queryset.order_by(*sort_by)
@@ -209,6 +214,12 @@ class NotificationService:
                 queryset=NotificationTemplateBody.objects.select_related(
                     'language'
                 )
+            ),
+            Prefetch(
+                'template__type__notificationtemplatetypedisplayname_set',
+                queryset=NotificationTemplateTypeDisplayName.objects.select_related(
+                    'language'
+                )
             )
         )
 
@@ -268,6 +279,12 @@ class NotificationService:
             Prefetch(
                 'template__notificationtemplatebody_set',
                 queryset=NotificationTemplateBody.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'template__type__notificationtemplatetypedisplayname_set',
+                queryset=NotificationTemplateTypeDisplayName.objects.select_related(
                     'language'
                 )
             )
