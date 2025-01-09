@@ -12,7 +12,7 @@ from management.models import (
     ReportTypeDisplayName
 )
 
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, Count
 from django.db.models.manager import BaseManager
 
 from rest_framework.status import HTTP_404_NOT_FOUND, HTTP_400_BAD_REQUEST
@@ -20,8 +20,6 @@ from rest_framework.status import HTTP_404_NOT_FOUND, HTTP_400_BAD_REQUEST
 from teams.models import (
     Post, 
     PostComment, 
-    PostCommentLike, 
-    PostCommentReply, 
     PostLike, 
     PostStatusDisplayName, 
     Team, 
@@ -186,8 +184,15 @@ def create_post_queryset_without_prefetch(
 
     status_filter : str | None = request.query_params.get('status', None)
     if status_filter is not None:
-        status_filter = status_filter.split(',')
-        queryset = queryset.filter(status__id__in=status_filter)
+        unfiltered_status_filter = status_filter.split(',')
+        status_filter = []
+
+        for status in unfiltered_status_filter:
+            if status.isdigit():
+                status_filter.append(int(status))
+        
+        if status_filter:
+            queryset = queryset.filter(status__id__in=status_filter)
 
     if sort_by is not None:
         queryset = queryset.order_by(*sort_by)
@@ -240,8 +245,15 @@ def create_post_comment_queryset_without_prefetch(
 
     status_filter : str | None = request.query_params.get('status', None)
     if status_filter is not None:
-        status_filter = status_filter.split(',')
-        queryset = queryset.filter(status__id__in=status_filter)
+        unfiltered_status_filter = status_filter.split(',')
+        status_filter = []
+
+        for status in unfiltered_status_filter:
+            if status.isdigit():
+                status_filter.append(int(status))
+        
+        if status_filter:
+            queryset = queryset.filter(status__id__in=status_filter)
 
     if sort_by is not None:
         queryset = queryset.order_by(*sort_by)
@@ -609,20 +621,14 @@ class UserManagementService:
                 'post__user__username'
             ],
             user__id=pk
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.all()
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.all()
-            ),
         ).select_related(
             'user',
             'status',
             'post__team',
             'post__user'
+        ).annotate(
+            likes_count=Count('postcommentlike'),
+            replies_count=Count('postcommentreply')
         )
     
     @staticmethod

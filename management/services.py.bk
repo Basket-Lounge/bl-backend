@@ -703,7 +703,13 @@ def create_post_queryset_without_prefetch(
 
     status_filter : str | None = request.query_params.get('status', None)
     if status_filter is not None:
-        status_filter = status_filter.split(',')
+        unfiltered_status_filter = status_filter.split(',')
+        status_filter = []
+
+        for status in unfiltered_status_filter:
+            if status.isdigit():
+                status_filter.append(int(status))
+
         queryset = queryset.filter(status__id__in=status_filter)
 
     if sort_by is not None:
@@ -757,7 +763,13 @@ def create_post_comment_queryset_without_prefetch(
 
     status_filter : str | None = request.query_params.get('status', None)
     if status_filter is not None:
-        status_filter = status_filter.split(',')
+        unfiltered_status_filter = status_filter.split(',')
+        status_filter = []
+
+        for status in unfiltered_status_filter:
+            if status.isdigit():
+                status_filter.append(int(status))
+
         queryset = queryset.filter(status__id__in=status_filter)
 
     if sort_by is not None:
