@@ -943,6 +943,8 @@ class PostService:
     
     @staticmethod
     def get_team_posts(request, pk):
+        teamname_queryset = TeamName.objects.select_related('language')
+
         posts = create_post_queryset_without_prefetch_for_user(
             request,
             fields_only=[
@@ -962,14 +964,29 @@ class PostService:
             'user',
             'team',
             'status'
+        ).annotate(
+            likes_count=Count('postlike'),
+            comments_count=Count('postcomment'),
         ).prefetch_related(
-            'postlike_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
                     'language'
                 )
             ),
+            Prefetch(
+                'team__teamname_set',
+                queryset=teamname_queryset
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=teamname_queryset
+                    )
+                )
+            )
         ).exclude(
             Q(status__name='deleted') | Q(status__name='hidden')
         )
@@ -988,8 +1005,6 @@ class PostService:
             'team',
             'status'
         ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
@@ -1013,6 +1028,9 @@ class PostService:
             id=post_id,
         ).exclude(
             status__name='deleted'
+        ).annotate(
+            likes_count=Count('postlike'),
+            comments_count=Count('postcomment'),
         )
 
         if request.user.is_authenticated:
@@ -1029,6 +1047,8 @@ class PostService:
             id=post_id
         ).only(
             'id'
+        ).annotate(
+            likes_count=Count('postlike'),
         )
 
         if request.user.is_authenticated:
@@ -1057,15 +1077,9 @@ class PostService:
         ).select_related(
             'user',
             'status'
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.only('id')
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.only('id')
-            ),
+        ).annotate(
+            likes_count=Count('postcommentlike'),
+            replies_count=Count('postcommentreply')
         )
 
         if request.user.is_authenticated:
@@ -1080,15 +1094,6 @@ class PostService:
         comment = PostComment.objects.select_related(
             'user',
             'status'
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.only('id')
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.only('id')
-            ),
         ).only(
             'id',
             'content',
@@ -1102,6 +1107,9 @@ class PostService:
             post__team__id=pk,
             post__id=post_id,
             id=comment_id
+        ).annotate(
+            likes_count=Count('postcommentlike'),
+            replies_count=Count('postcommentreply')
         )
 
         if request.user.is_authenticated:
@@ -1122,8 +1130,6 @@ class PostService:
             'team',
             'status'
         ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
@@ -1150,6 +1156,9 @@ class PostService:
             created_at__gte=datetime.now() - timedelta(hours=24)
         ).exclude(
             Q(status__name='deleted') | Q(status__name='hidden')
+        ).annotate(
+            likes_count=Count('postlike'),
+            comments_count=Count('postcomment'),
         )
 
         if request.user.is_authenticated:
@@ -1172,8 +1181,6 @@ class PostService:
             'team',
             'status'
         ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
@@ -1196,6 +1203,9 @@ class PostService:
             created_at__gte=datetime.now() - timedelta(hours=24)
         ).exclude(
             Q(status__name='deleted') | Q(status__name='hidden')
+        ).annotate(
+            likes_count=Count('postlike'),
+            comments_count=Count('postcomment'),
         )
 
         if request.user.is_authenticated:
@@ -1270,7 +1280,9 @@ class PostService:
             post__team__id=pk,
             post__id=post_id,
             id=comment_id
-        ).only('id')
+        ).only('id').annotate(
+            likes_count=Count('postcommentlike')
+        )
 
         if request.user.is_authenticated:
             comment = comment.annotate(

@@ -16,7 +16,8 @@ from rest_framework.status import (
 )
 
 from api.exceptions import CustomError
-from api.paginators import CustomPageNumberPagination, NotificationHeaderPageNumberPagination
+from api.paginators import CustomPageNumberPagination
+
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
 from management.models import (
@@ -28,6 +29,7 @@ from management.serializers import (
 )
 from notification.services.models_services import NotificationService
 from notification.services.serializers_services import NotificationSerializerService
+from notification.utils import get_notification_pagination_class
 from teams.services import PostSerializerService, TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
 from users.models import Role, User, UserChat
@@ -299,10 +301,11 @@ class UserViewSet(ViewSet):
     )
     def get_comments(self, request):
         comments = UserViewService.get_user_comments(request, request.user.id)
+
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
-        serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
 
+        serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -312,11 +315,11 @@ class UserViewSet(ViewSet):
     )
     def get_chats(self, request):
         chats = UserChatService.get_my_chats(request)
+
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(chats, request)
 
         serializer = UserChatSerializerService.serialize_chats(request, paginated_data)
-
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -573,7 +576,8 @@ class UserViewSet(ViewSet):
     )
     def get_notifications(self, request, pk=None):
         notifications = NotificationService.get_user_notifications_with_request(request)
-        pagination = NotificationHeaderPageNumberPagination()
+
+        pagination = get_notification_pagination_class(request.query_params.get('context', 'default'))()
         paginated_data = pagination.paginate_queryset(notifications, request)
 
         serializer = NotificationSerializerService.serialize_notifications(paginated_data)
@@ -636,7 +640,7 @@ class UserViewSet(ViewSet):
     def get_unread_notifications(self, request):
         notifications = NotificationService.get_user_unread_notifications_with_request(request)
 
-        pagination = NotificationHeaderPageNumberPagination()
+        pagination = get_notification_pagination_class(request.query_params.get('context', 'default'))()
         paginated_data = pagination.paginate_queryset(notifications, request)
 
         serializer = NotificationSerializerService.serialize_notifications(paginated_data)

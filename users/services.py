@@ -9,10 +9,10 @@ from management.models import (
     InquiryTypeDisplayName
 )
 from management.serializers import InquirySerializer
-from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike
+from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike, TeamName
 from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 
-from django.db.models import Q, Exists, OuterRef, Prefetch
+from django.db.models import Q, Exists, OuterRef, Prefetch, Count
 
 from users.serializers import (
     PostCommentSerializer, 
@@ -77,7 +77,12 @@ def create_user_queryset_without_prefetch(
 
     roles_filter : str | None = request.query_params.get('roles', None)
     if roles_filter is not None:
-        roles_filter = roles_filter.split(',')
+        unfiltered_roles_filter = roles_filter.split(',')
+        roles_filter = []
+
+        for role in unfiltered_roles_filter:
+            if role.isdigit():
+                roles_filter.append(int(role))
 
     sort_by : str | None = request.query_params.get('sort', None)
     if sort_by is not None:
@@ -586,6 +591,8 @@ class UserViewService:
             if request.user.id == user_id:
                 q = Q(status__name='created') | Q(status__name='hidden')
 
+        teamname_queryset = TeamName.objects.select_related('language')
+
         posts = create_post_queryset_without_prefetch_for_user(
             request,
             fields_only=[
@@ -601,15 +608,29 @@ class UserViewService:
                 'status__name'
             ],
             user__id=user_id,
+        ).annotate(
+            likes_count=Count('postlike'),
+            comments_count=Count('postcomment'),
         ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
                     'language'
                 )
             ),
+            Prefetch(
+                'team__teamname_set',
+                queryset=teamname_queryset
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=teamname_queryset
+                    )
+                )
+            )
         ).filter(q)
 
         if request.user.is_authenticated:
@@ -641,9 +662,9 @@ class UserViewService:
             ],
             user__id=user_id,
             status__name='created'
-        ).prefetch_related(
-            'postcommentlike_set',
-            'postcommentreply_set',
+        ).annotate(
+            likes_count=Count('postcommentlike'),
+            replies_count=Count('postcommentreply')
         ).select_related(
             'user',
             'status',

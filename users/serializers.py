@@ -293,12 +293,21 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         return serializer.data
     
     def get_likes_count(self, obj):
-        return obj.postlike_set.count()
+        if not hasattr(obj, 'likes_count'):
+            return None
+
+        return obj.likes_count
     
     def get_comments_count(self, obj):
-        return obj.postcomment_set.count()
+        if not hasattr(obj, 'comments_count'):
+            return None
+
+        return obj.comments_count
     
     def get_liked(self, obj):
+        if not hasattr(obj, 'liked'):
+            return None
+
         return obj.liked
 
 
@@ -379,10 +388,16 @@ class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeria
         return serializer.data
     
     def get_replies_count(self, obj):
-        return obj.postcommentreply_set.count()
-    
+        if not hasattr(obj, 'replies_count'):
+            return None
+
+        return obj.replies_count
+
     def get_likes_count(self, obj):
-        return obj.postcommentlike_set.count()
+        if not hasattr(obj, 'likes_count'):
+            return None
+        
+        return obj.likes_count
     
     def get_liked(self, obj):
         if not hasattr(obj, 'liked'):
