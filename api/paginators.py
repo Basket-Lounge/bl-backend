@@ -4,6 +4,7 @@ from django.db.utils import OperationalError
 from django.utils.functional import cached_property
 
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
 
 
 class LargeTablePaginator(Paginator):
@@ -52,6 +53,21 @@ class CustomPageNumberPagination(PageNumberPagination):
     django_paginator_class = LargeTablePaginator
     page_size = 10
     page_query_param = 'page'
+
+    def get_paginated_response(self, data):
+        # Calculate the first and last page numbers
+        first_page = 1
+        last_page = self.page.paginator.num_pages
+
+        return Response({
+            'count': self.page.paginator.count,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'current_page': self.page.number,
+            'first_page': first_page,
+            'last_page': last_page,
+            'results': data
+        })
 
 
 class NotificationHeaderPageNumberPagination(CustomPageNumberPagination):
