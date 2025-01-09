@@ -8,9 +8,26 @@ User = get_user_model()
 class NotificationTemplateType(models.Model):
     name = models.CharField(max_length=512, unique=True)
     description = models.CharField(max_length=2048)
+    color_code = models.CharField(max_length=7, default='#423F3E')
 
     def __str__(self):
-        return self.name
+        return f'{self.name} ({self.id})'
+    
+class NotificationTemplateTypeDisplayName(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False
+    )
+    type = models.ForeignKey(NotificationTemplateType, on_delete=models.CASCADE)
+    language = models.ForeignKey('teams.Language', on_delete=models.PROTECT)
+    name = models.CharField(max_length=512)
+
+    def __str__(self):
+        return f'{self.id}'
+    
+    class Meta:
+        unique_together = ['type', 'language']
     
 class NotificationTemplate(models.Model):
     id = models.UUIDField(
