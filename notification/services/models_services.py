@@ -8,6 +8,7 @@ from notification.models import (
     NotificationRecipient, 
     NotificationTemplate, 
     NotificationTemplateBody,
+    NotificationTemplateType,
     NotificationTemplateTypeDisplayName,
 )
 from players.models import Player
@@ -23,9 +24,9 @@ from django.db.models.manager import BaseManager
 
 notification_queryset_allowed_order_by_fields = [
     'created_at',
-    'notificationtemplate__notification_type__name',
+    'template__type__name',
     '-created_at',
-    '-notificationtemplate__notification_type__name'
+    '-template__type__name'
 ]
 
 def create_notification_queryset_without_prefetch(
@@ -37,12 +38,12 @@ def create_notification_queryset_without_prefetch(
     Create a queryset for the Notification model without prefetching related models.\n
 
     Args:
-    request (Request): The request object.
-    fields_only (list): The fields to include in the queryset.
-    **kwargs: The filters to apply to the queryset.
+        request (Request): The request object.
+        fields_only (list): The fields to include in the queryset.
+        **kwargs: The filters to apply to the queryset.
 
     Returns:
-    QuerySet: The queryset of notifications.
+        QuerySet: The queryset of notifications.
     """
 
     sort_by : str | None = request.query_params.get('sort', None)
@@ -149,11 +150,11 @@ class NotificationService:
         Create a notification recipient.
 
         Args:
-        notification (Notification): The notification to send.
-        recipient (User): The user to send the notification to.
+            notification (Notification): The notification to send.
+            recipient (User): The user to send the notification to.
 
         Returns:
-        NotificationRecipient: The notification recipient that was created.
+            NotificationRecipient: The notification recipient that was created.
         """
 
         recipient = NotificationRecipient.objects.create(
@@ -164,15 +165,33 @@ class NotificationService:
         return recipient
     
     @staticmethod
+    def get_notification_template_types() -> BaseManager[NotificationTemplateType]:
+        """
+        Get all notification template types.
+
+        Returns:
+            BaseManager[NotificationTemplateTypeDisplayName]: The QuerySet of notification template types.
+        """
+
+        return NotificationTemplateType.objects.prefetch_related(
+            Prefetch(
+                'notificationtemplatetypedisplayname_set',
+                queryset=NotificationTemplateTypeDisplayName.objects.select_related(
+                    'language'
+                )
+            )
+        )
+    
+    @staticmethod
     def get_user_notifications_with_request(request: Request) -> BaseManager[Notification]:
         '''
         Get the notifications for a user.
 
         Args:
-        request (Request): The request object.
+            request (Request): The request object.
 
         Returns:
-        BaseManager[Notification]: The QuerySet of notifications.
+            BaseManager[Notification]: The QuerySet of notifications.
         '''
 
         notifications = create_notification_queryset_without_prefetch(
@@ -232,10 +251,10 @@ class NotificationService:
         Requires the request object for dynamically filtering the queryset.
 
         Args:
-        request (Request): The request object.
+            request (Request): The request object.
 
         Returns:
-        BaseManager[Notification]: The QuerySet of unread notifications.
+            BaseManager[Notification]: The QuerySet of unread notifications.
         '''
 
         if not request.user.is_authenticated:
@@ -399,6 +418,12 @@ class NotificationService:
                 queryset=NotificationTemplateBody.objects.select_related(
                     'language'
                 )
+            ),
+            Prefetch(
+                'template__type__notificationtemplatetypedisplayname_set',
+                queryset=NotificationTemplateTypeDisplayName.objects.select_related(
+                    'language'
+                )
             )
         ).first()
 
@@ -508,12 +533,12 @@ class NotificationService:
         Create a notification for how many replies a comment has.
 
         Args:
-        reply (PostCommentReply): The reply that was made.
-        replies_count (int): The number of replies the comment has.
-        user (User): The user who made the reply.
+            reply (PostCommentReply): The reply that was made.
+            replies_count (int): The number of replies the comment has.
+            user (User): The user who made the reply.
 
         Returns:
-        Notification: The notification that was created.
+            Notification: The notification that was created.
         """
 
         if reply.post_comment.user == user:
@@ -557,12 +582,12 @@ class NotificationService:
         Create a notification for how many likes a comment has.
 
         Args:
-        post_comment (PostComment): The comment that was liked.
-        number_of_likes (int): The number of likes the comment has.
-        user (User): The user who liked the comment.
+            post_comment (PostComment): The comment that was liked.
+            number_of_likes (int): The number of likes the comment has.
+            user (User): The user who liked the comment.
 
         Returns:
-        Notification: The notification that was created.
+            Notification: The notification that was created.
         """
 
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
@@ -604,12 +629,12 @@ class NotificationService:
         Create a notification for how many likes a user has.
 
         Args:
-        user (User): The user who liked the other user.
-        liked_user (User): The user who was liked.
-        number_of_likes (int): The number of likes the user has.
+            user (User): The user who liked the other user.
+            liked_user (User): The user who was liked.
+            number_of_likes (int): The number of likes the user has.
 
         Returns:
-        Notification: The notification that was created.
+            Notification: The notification that was created.
         """
 
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
@@ -680,8 +705,8 @@ class NotificationService:
         Mark a user's notification as read.
 
         Args:
-        notification_id (str): The ID of the notification.
-        user (User): The user who received the notification.
+            notification_id (str): The ID of the notification.
+            user (User): The user who received the notification.
         """
 
         queryset = NotificationRecipient.objects.filter(

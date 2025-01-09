@@ -1,13 +1,33 @@
 from notification.models import (
-    Notification, 
+    Notification,
+    NotificationTemplateType, 
 )
 
-from notification.serializers import NotificationSerializer
+from notification.serializers import NotificationSerializer, NotificationTemplateTypeSerializer
 
 from django.db.models.manager import BaseManager
 
 
 class NotificationSerializerService:
+    @staticmethod
+    def serialize_notification_template_types(notification_template_types: BaseManager[NotificationTemplateType]) -> NotificationTemplateTypeSerializer:
+        """
+        Serialize a queryset of notification template types.
+
+        Args:
+        notification_template_types (BaseManager[NotificationTemplateType]): The queryset of notification template types.
+        """
+
+        return NotificationTemplateTypeSerializer(
+            notification_template_types, 
+            many=True,
+            context={
+                'notificationtemplatetypedisplayname': {
+                    'fields': ['id', 'name', 'language_data']
+                }
+            }
+        )
+
     @staticmethod
     def serialize_notifications(notifications: BaseManager[Notification]) -> NotificationSerializer:
         """
