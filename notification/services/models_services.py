@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Union
-from api.exceptions import AnonymousUserError, NotFoundError
+from api.exceptions import AnonymousUserError, NotFoundError, BadRequestError
+from api.utils import is_valid_uuid
 from games.models import Game
 from notification.models import (
     Notification, 
@@ -68,7 +69,10 @@ def create_notification_queryset_without_prefetch(
         types_filter = []
 
         for type in unfiltered_types:
-            types_filter.append(int(type))
+            try:
+                types_filter.append(int(type))
+            except ValueError:
+                pass
         
         if types_filter:
             queryset = queryset.filter(template__type__id__in=types_filter)
@@ -332,17 +336,33 @@ class NotificationService:
         ).count()
     
     @staticmethod
-    def delete_user_notifications(user: User) -> None:
+    def delete_user_notifications(user: User, data: List[str] = None) -> None:
         """
         Delete a user's notifications.
 
         Args:
-        user (User): The user who received the notifications.
+            user (User): The user who received the notifications.
+            data (List[str]): The IDs of the notifications to delete.
         """
 
-        NotificationRecipient.objects.filter(
-            recipient=user
-        ).update(
+        queryset = NotificationRecipient.objects.filter(
+            recipient=user,
+        )
+
+        if data is not None:
+            if not isinstance(data, list):
+                raise BadRequestError('Data must be a list of UUID strings')
+            
+            for item in data:
+                is_valid = is_valid_uuid(item)
+                if not is_valid:
+                    raise BadRequestError('Data must be a list of UUID strings')
+
+            queryset = queryset.filter(
+                notification__id__in=data
+            )
+        
+        queryset.update(
             deleted=True,
             deleted_at=datetime.now()
         ) 
@@ -731,8 +751,8 @@ class NotificationService:
         Delete a user's notification.
 
         Args:
-        notification_id (str): The ID of the notification.
-        user (User): The user who received the notification.
+            notification_id (str): The ID of the notification.
+            user (User): The user who received the notification.
         """
 
         queryset = NotificationRecipient.objects.filter(

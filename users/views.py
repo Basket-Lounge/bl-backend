@@ -586,7 +586,7 @@ class UserViewSet(ViewSet):
     @get_notifications.mapping.delete
     def delete_notifications(self, request, pk=None):
         try:
-            NotificationService.delete_user_notifications(request.user)
+            NotificationService.delete_user_notifications(request.user, request.data)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
 
