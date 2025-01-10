@@ -48,8 +48,11 @@ class Error500(CustomError):
 # Subclass 400, 401, 403, 404, 405, 500
 
 class BadRequestError(Error400):
-    def __init__(self):
-        super().__init__('Bad request. Please check your request and try again.')
+    def __init__(self, message = None):
+        if message:
+            super().__init__(message)
+        else:
+            super().__init__('Bad request. Please check your request and try again.')
 
 class UnauthorizedError(Error401):
     def __init__(self):

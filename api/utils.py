@@ -1,3 +1,5 @@
+import uuid
+
 class MockResponse:
     def __init__(self, status_code, json_data):
         self.status_code = status_code
@@ -9,3 +11,21 @@ class MockResponse:
 
     def json(self):
         return self.json_data
+    
+def is_valid_uuid(uuid_to_test: str, version : int =4) -> bool:
+    """
+    Check if uuid is valid.
+
+    Args:
+        uuid_to_test (str): The uuid to test.
+        version (int): The version of the uuid. Defaults to 4.
+    Returns:
+        bool: True if the uuid is valid, False otherwise.
+    """
+
+    try:
+        uuid_obj = uuid.UUID(uuid_to_test, version=version)
+    except ValueError:
+        return False
+
+    return True
