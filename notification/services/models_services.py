@@ -336,7 +336,7 @@ class NotificationService:
         ).count()
     
     @staticmethod
-    def delete_user_notifications(user: User, data: List[str] = None) -> None:
+    def delete_user_notifications(user: User, data: List[str] | None | dict = None) -> None:
         """
         Delete a user's notifications.
 
@@ -349,7 +349,7 @@ class NotificationService:
             recipient=user,
         )
 
-        if data is not None:
+        if bool(data) == True: 
             if not isinstance(data, list):
                 raise BadRequestError('Data must be a list of UUID strings')
             
@@ -368,7 +368,7 @@ class NotificationService:
         ) 
 
     @staticmethod
-    def mark_user_notifications_as_read(user: User) -> None:
+    def mark_user_notifications_as_read(user: User, data: List[str] | None = None) -> None:
         """
         Mark a user's notifications as read.
 
@@ -376,10 +376,24 @@ class NotificationService:
         user (User): The user who received the notifications.
         """
 
-        NotificationRecipient.objects.filter(
+        queryset = NotificationRecipient.objects.filter(
             recipient=user,
-            read=False
-        ).update(
+        )
+
+        if bool(data) == True:
+            if not isinstance(data, list):
+                raise BadRequestError('Data must be a list of UUID strings')
+            
+            for item in data:
+                is_valid = is_valid_uuid(item)
+                if not is_valid:
+                    raise BadRequestError('Data must be a list of UUID strings')
+
+            queryset = queryset.filter(
+                notification__id__in=data
+            )
+        
+        queryset.update(
             read=True,
             read_at=datetime.now()
         )

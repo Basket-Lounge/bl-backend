@@ -595,7 +595,7 @@ class UserViewSet(ViewSet):
     @get_notifications.mapping.patch
     def mark_notifications_as_read(self, request, pk=None):
         try:
-            NotificationService.mark_user_notifications_as_read(request.user)
+            NotificationService.mark_user_notifications_as_read(request.user, request.data)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
 

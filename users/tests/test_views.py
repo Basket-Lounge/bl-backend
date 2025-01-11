@@ -9,7 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.utils import MockResponse
 from games.models import Game
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
-from notification.models import Notification, NotificationTemplate
+from notification.models import Notification, NotificationRecipient, NotificationTemplate
 from notification.services.models_services import NotificationService
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
@@ -1654,6 +1654,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['count'], 1)
         self.assertEqual(len(data['results']), 1)
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
 
         notification = data['results'][0]
 
@@ -1720,6 +1722,21 @@ class UserAPIEndpointTestCase(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+        # test with a query parameter "context"
+        request = factory.get(
+            f'/api/users/me/notifications/?context=header'
+        )
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
         self.assertEqual(len(data['results']), 3)
         self.assertTrue(data['next'])
         self.assertFalse(data['previous'])
@@ -1779,6 +1796,43 @@ class UserAPIEndpointTestCase(APITestCase):
         response = view(request)
         self.assertEqual(response.status_code, 200)
         
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+
+        ## re-mark notifications as not deleted
+        NotificationRecipient.objects.filter(
+            recipient=user
+        ).update(
+            deleted=False
+        )
+
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1) 
+
+        ## Randomly mark some notifications as deleted
+        notifications = Notification.objects.filter(
+            notificationrecipient__recipient=user
+        )[:3]
+
+        ids = [str(notification.id) for notification in notifications]
+        request = factory.delete(
+            f'/api/users/me/notifications/',
+            data=ids,
+            format='json'
+        )
+        view = UserViewSet.as_view({'delete': 'delete_notifications'})
+        force_authenticate(request, user=user)
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+
         request = factory.get(
             f'/api/users/me/notifications/'
         )
@@ -1856,8 +1910,8 @@ class UserAPIEndpointTestCase(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['count'], 10)
-        self.assertEqual(len(data['results']), 3)
-        self.assertTrue(data['next'])
+        self.assertEqual(len(data['results']), 10)
+        self.assertFalse(data['next'])
         self.assertFalse(data['previous'])
 
         for notification in data['results']:
@@ -1875,6 +1929,77 @@ class UserAPIEndpointTestCase(APITestCase):
             self.assertEqual(len(notification['contents']), 2)
             self.assertEqual(notification['picture_url'], None)
 
+        ## Re-mark notifications as not read
+        NotificationRecipient.objects.filter(
+            recipient=user
+        ).update(
+            read=False
+        )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 10)
+        self.assertEqual(len(data['results']), 10)
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        for notification in data['results']:
+            self.assertTrue('id' in notification)
+            self.assertTrue('created_at' in notification)
+            self.assertTrue('updated_at' in notification)
+            self.assertTrue('picture_url' in notification)
+            self.assertTrue('redirect_url' in notification)
+            self.assertTrue('recipients' in notification)
+            self.assertTrue('contents' in notification)
+
+            self.assertEqual(len(notification['recipients']), 1)
+            self.assertEqual(notification['recipients'][0]['recipient_data']['username'], user.username)
+            self.assertEqual(notification['recipients'][0]['read'], False)
+            self.assertEqual(len(notification['contents']), 2)
+            self.assertEqual(notification['picture_url'], None)
+
+        ## Randomly mark two notifications as read
+        notifications = Notification.objects.filter(
+            notificationrecipient__recipient=user
+        )[:2]
+        ids = [str(notification.id) for notification in notifications]
+
+        request = factory.patch(
+            f'/api/users/me/notifications/',
+            data=ids,
+            format='json'
+        )
+        force_authenticate(request, user=user)
+        view = UserViewSet.as_view({'patch': 'mark_notifications_as_read'})
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        
+        read_count = 0
+        page = 1
+
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+        force_authenticate(request, user=user)
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 10)
+        self.assertEqual(len(data['results']), 10)
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        for notification in data['results']:
+            if notification['recipients'][0]['read']:
+                read_count += 1
+
+        self.assertEqual(read_count, 2)
 
 class JWTViewSetTestCase(APITestCase):
     def setUp(self):
