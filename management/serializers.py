@@ -414,6 +414,15 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
 
         return count
     
+class InquiryCommonMessageSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    message = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    user_type = serializers.CharField()
+    user_id = serializers.IntegerField()
+    user_username = serializers.CharField()
+    
 
 class ReportTypeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     display_names = serializers.SerializerMethodField()

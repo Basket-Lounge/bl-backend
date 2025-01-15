@@ -95,11 +95,11 @@ class NotificationService:
         Create a notification.
 
         Args:
-        template (NotificationTemplate): The template for the notification.
-        data (dict): The data to include in the notification.
+            template (NotificationTemplate): The template for the notification.
+            data (dict): The data to include in the notification.
 
         Returns:
-        Notification: The notification that was created.
+            Notification: The notification that was created.
         """
 
         notification = Notification.objects.create(
@@ -117,11 +117,11 @@ class NotificationService:
         Create a notification actor.
 
         Args:
-        notification (Notification): The notification to send.
-        actors (List[Union[User, Post, PostComment, PostCommentReply, Game, Player, Team, UserChat]]): The actors in the notification.
+            notification (Notification): The notification to send.
+            actors (List[Union[User, Post, PostComment, PostCommentReply, Game, Player, Team, UserChat]]): The actors in the notification.
 
         Returns:
-        NotificationActor: The notification actor that was created.
+            NotificationActor: The notification actor that was created.
         """
 
         filtered_actors = {}
@@ -321,10 +321,10 @@ class NotificationService:
         Get the number of unread notifications for a user.
 
         Args:
-        user (User): The user to get the notifications for.
+            user (User): The user to get the notifications for.
 
         Returns:
-        int: The number of unread notifications.
+            int: The number of unread notifications.
         '''
 
         if user == AnonymousUser:
@@ -373,7 +373,7 @@ class NotificationService:
         Mark a user's notifications as read.
 
         Args:
-        user (User): The user who received the notifications.
+            user (User): The user who received the notifications.
         """
 
         queryset = NotificationRecipient.objects.filter(
@@ -407,11 +407,11 @@ class NotificationService:
         Get a user's notification by ID.
 
         Args:
-        notification_id (str): The ID of the notification.
-        user (User): The user who received the notification.
+            notification_id (str): The ID of the notification.
+            user (User): The user who received the notification.
 
         Returns:
-        Notification | None: The notification if it exists, None otherwise.
+            Notification | None: The notification if it exists, None otherwise.
         """
 
         notification = Notification.objects.filter(
@@ -469,10 +469,10 @@ class NotificationService:
         Check if a notification exists by various criteria.
 
         Args:
-        **kwargs: The criteria to check.
+            **kwargs: The criteria to check.
 
         Returns:
-        bool: True if the notification exists, False otherwise.
+            bool: True if the notification exists, False otherwise.
         """
 
         return Notification.objects.filter(**kwargs).exists()
@@ -483,8 +483,8 @@ class NotificationService:
         Create a notification for how many likes a post has.
 
         Args:
-        post (Post): The post that was liked.
-        number_of_likes (int): The number of likes the post has.
+            post (Post): The post that was liked.
+            number_of_likes (int): The number of likes the post has.
         """
 
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
@@ -521,11 +521,11 @@ class NotificationService:
         Create a notification for a comment on a post.
 
         Args:
-        post (Post): The post that was commented on.
-        user (User): The user who commented.
+            post (Post): The post that was commented on.
+            user (User): The user who commented.
 
         Returns:
-        Notification: The notification that was created.
+            Notification: The notification that was created.
         """
 
         if post.user == user:
@@ -707,10 +707,10 @@ class NotificationService:
         Create a notification for when a user logs in.
 
         Args:
-        user (User): The user who logged in.
+            user (User): The user who logged in.
 
         Returns:
-        Notification: The notification that was created.
+            Notification: The notification that was created.
         """
 
         template = NotificationTemplate.objects.get(subject='user-login')
