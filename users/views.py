@@ -16,7 +16,7 @@ from rest_framework.status import (
 )
 
 from api.exceptions import CustomError
-from api.paginators import CustomPageNumberPagination
+from api.paginators import ChatMessageCursorPagination, CustomPageNumberPagination, InquiryMessageCursorPagination
 
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
@@ -126,6 +126,8 @@ class UserViewSet(ViewSet):
         elif self.action == 'get_chat':
             permission_classes=[IsAuthenticated]
         elif self.action == 'delete_chat':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_chat_messages':
             permission_classes=[IsAuthenticated]
         elif self.action == 'post_chat_message':
             permission_classes=[IsAuthenticated]
@@ -314,7 +316,10 @@ class UserViewSet(ViewSet):
         url_path=r'me/chats',
     )
     def get_chats(self, request):
-        chats = UserChatService.get_my_chats(request)
+        try:
+            chats = UserChatService.get_my_chats_with_request(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(chats, request)
@@ -332,7 +337,7 @@ class UserViewSet(ViewSet):
         if user_id == user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        chat = UserChatService.get_chat(request, user_id)
+        chat = UserChatService.get_user_chat(request.user, user_id)
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
@@ -346,14 +351,36 @@ class UserViewSet(ViewSet):
         if user_id == request.user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        UserChatService.delete_chat(request, user_id)
+        UserChatService.delete_chat(request.user, user_id)
         return Response(status=HTTP_200_OK)
-    
+
     @action(
         detail=False,
-        methods=['post'],
+        methods=['get'],
         url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/messages',
     )
+    def get_chat_messages(self, request, user_id):
+        if user_id == request.user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
+
+        chat = UserChatService.get_user_chat(request.user, user_id)
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        try: 
+            messages = UserChatService.get_chat_messages(chat, request.user)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+        
+        pagination = ChatMessageCursorPagination()
+        paginated_data = pagination.paginate_queryset(messages, request)
+
+        serializer = UserChatSerializerService.serialize_messages_for_chat(
+            sorted(paginated_data, key=lambda x: x.created_at)
+        )
+        return pagination.get_paginated_response(serializer.data)
+
+    @get_chat_messages.mapping.post 
     def post_chat_message(self, request, user_id):
         if user_id == request.user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
@@ -526,9 +553,31 @@ class UserViewSet(ViewSet):
     
     @action(
         detail=False,
-        methods=['post'],
+        methods=['get'],
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/messages',
     )
+    def get_inquiry_messages(self, request, inquiry_id):
+        user = request.user
+        inquiry = Inquiry.objects.filter(
+            id=inquiry_id, 
+            user=user
+        ).first()
+
+        if not inquiry:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        pagination = InquiryMessageCursorPagination()
+        try:
+            paginated_data = pagination.paginate_querysets(inquiry_id, request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
+        serializer = InquirySerializerService.serialize_inquiry_messages(
+            paginated_data
+        )
+        return pagination.get_paginated_response(serializer.data)
+
+    @get_inquiry_messages.mapping.post 
     def post_inquiry_message(self, request, inquiry_id):
         user = request.user
         inquiry_exists = Inquiry.objects.filter(
@@ -654,6 +703,7 @@ class UserViewSet(ViewSet):
     def get_unread_notifications_count(self, request):
         count = NotificationService.get_user_unread_notifications_count(request.user)
         return Response({'count': count})
+
 
 class JWTViewSet(ViewSet):
     permission_classes = [IsAuthenticated]

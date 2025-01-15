@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Tuple, Any
+from api.exceptions import AnonymousUserError, BadRequestError, NotFoundError
 from api.websocket import send_message_to_centrifuge
 from management.models import (
     Inquiry, 
@@ -8,11 +9,14 @@ from management.models import (
     InquiryModeratorMessage, 
     InquiryTypeDisplayName
 )
-from management.serializers import InquirySerializer
+from management.serializers import InquiryCommonMessageSerializer, InquirySerializer
 from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike, TeamName
 from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 
-from django.db.models import Q, Exists, OuterRef, Prefetch, Count
+from django.db.models import Q, Exists, OuterRef, Prefetch, Count, F
+from django.db.models import Value, CharField
+from django.db.models.manager import BaseManager
+from django.db.models.query import QuerySet
 
 from users.serializers import (
     PostCommentSerializer, 
@@ -22,6 +26,8 @@ from users.serializers import (
     UserSerializer, 
     UserUpdateSerializer
 )
+
+from rest_framework.request import Request
 
 
 user_queryset_allowed_order_by_fields = (
@@ -682,9 +688,20 @@ class UserViewService:
 
 class UserChatService:
     @staticmethod
-    def get_chat(request, user_id):
+    def get_user_chat(requesting_user: User, user_id: int):
+        """
+        Get a chat between two users.
+
+        Args:
+            requesting_user (User): The user that is requesting the chat.
+            user_id (int): The id of the user that the chat is with.
+        
+        Returns:
+            UserChat | None
+        """
+
         return UserChat.objects.filter(
-            userchatparticipant__user=request.user,
+            userchatparticipant__user=requesting_user,
             userchatparticipant__chat_blocked=False,
             userchatparticipant__user__chat_blocked=False,
         ).filter(
@@ -692,13 +709,16 @@ class UserChatService:
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    Prefetch(
-                        'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.order_by('-created_at')
-                    ),
-                ).select_related(
-                    'user',
+                # UserChatParticipant.objects.prefetch_related(
+                #     Prefetch(
+                #         'userchatparticipantmessage_set',
+                #         queryset=UserChatParticipantMessage.objects.order_by('-created_at')
+                #     ),
+                # ).select_related(
+                #     'user',
+                # )
+                UserChatParticipant.objects.select_related(
+                    'user'
                 )
             )
         ).first()
@@ -708,13 +728,16 @@ class UserChatService:
         return UserChat.objects.prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    Prefetch(
-                        'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.order_by('-created_at')
-                    ),
-                ).select_related(
-                    'user',
+                # UserChatParticipant.objects.prefetch_related(
+                #     Prefetch(
+                #         'userchatparticipantmessage_set',
+                #         queryset=UserChatParticipantMessage.objects.order_by('-created_at')
+                #     ),
+                # ).select_related(
+                #     'user',
+                # )
+                UserChatParticipant.objects.select_related(
+                    'user'
                 )
             )
         ).filter(
@@ -722,7 +745,20 @@ class UserChatService:
         ).first()
     
     @staticmethod
-    def get_my_chats(request):
+    def get_my_chats_with_request(request: Request):
+        """
+        Get all chats that the user is participating in. The request must be authenticated.
+
+        Args:
+            request (Request): The request object.
+        
+        Returns:
+            QuerySet: The queryset of the chats.
+        """
+
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
+
         return create_userchat_queryset_without_prefetch_for_user(
             request,
             fields_only=[],
@@ -732,13 +768,16 @@ class UserChatService:
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    Prefetch(
-                        'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.order_by('created_at')
-                    ),
-                ).select_related(
-                    'user',
+                # UserChatParticipant.objects.prefetch_related(
+                #     Prefetch(
+                #         'userchatparticipantmessage_set',
+                #         queryset=UserChatParticipantMessage.objects.order_by('created_at')
+                #     ),
+                # ).select_related(
+                #     'user',
+                # )
+                UserChatParticipant.objects.select_related(
+                    'user'
                 )
             )
         )
@@ -770,6 +809,71 @@ class UserChatService:
         return message, chat
     
     @staticmethod
+    def get_chat_messages(chat: UserChat, user: User = None) -> BaseManager[UserChatParticipantMessage]:
+        """
+        Get all active messages in a chat.
+
+        Args:
+            chat (UserChat): The chat object.
+            user (User): The user that is requesting the messages.
+        
+        Returns:
+            QuerySet: The queryset of the messages.
+
+        Raises:
+            BadRequestError:
+              - If the chat is blocked by the user.
+            NotFoundError:
+              - If the chat is deleted by the user.
+        """
+
+        user_participant = chat.userchatparticipant_set.filter(user=user).first()
+        if user_participant is None:
+            return None
+
+        if user_participant.chat_blocked:
+            raise BadRequestError('A user has blocked the chat.')
+        
+        if user_participant.chat_deleted:
+            raise NotFoundError()
+        
+        last_deleted_at = user_participant.last_deleted_at 
+        last_blocked_at = user_participant.last_blocked_at 
+
+        last_at = None
+
+        if last_deleted_at is not None and last_blocked_at is not None:
+            if last_deleted_at > last_blocked_at:
+                last_at = last_deleted_at
+        elif last_deleted_at is not None:
+            last_at = last_deleted_at
+        elif last_blocked_at is not None:
+            last_at = last_blocked_at
+
+        queryset = UserChatParticipantMessage.objects.filter(
+            sender__chat=chat
+        ).select_related(
+            'sender__user',
+        ).order_by(
+            '-created_at'
+        ).only(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'sender__id',
+            'sender__last_deleted_at',
+            'sender__last_blocked_at',
+            'sender__user__id',
+            'sender__user__username',
+        )
+
+        if last_at is not None:
+            queryset = queryset.filter(created_at__gt=last_at)
+
+        return queryset
+    
+    @staticmethod
     def mark_chat_as_read(request, user_id):
         user = request.user
         chat = UserChat.objects.filter(
@@ -789,10 +893,20 @@ class UserChatService:
         return chat
 
     @staticmethod
-    def delete_chat(request, user_id):
-        user = request.user
+    def delete_chat(requesting_user: User, user_id: int):
+        """
+        Delete a chat between two users.
+
+        Args:
+            requesting_user (User): The user that is requesting the deletion.
+            user_id (int): The id of the user that the chat is with.
+        
+        Returns:
+            None
+        """
+
         chat = UserChat.objects.filter(
-            userchatparticipant__user=user
+            userchatparticipant__user=requesting_user
         ).filter(
             userchatparticipant__user__id=user_id
         ).first()
@@ -802,7 +916,7 @@ class UserChatService:
 
         UserChatParticipant.objects.filter(
             chat=chat,
-            user=user
+            user=requesting_user
         ).update(chat_deleted=True, last_deleted_at=datetime.now(timezone.utc))
 
         UserChatParticipant.objects.filter(
@@ -948,17 +1062,17 @@ class UserChatSerializerService:
             ],
             context={
                 'userchatparticipant': {
-                    'fields': ['user_data', 'messages']
+                    'fields': ['user_data']
                 },
-                'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data'],
-                },
-                'userchatparticipantmessage_extra': {
-                    'user_last_deleted_at': {
-                        'id': user_participant.id,
-                        'last_deleted_at': user_participant.last_deleted_at
-                    }
-                },
+                # 'userchatparticipantmessage': {
+                #     'fields_exclude': ['sender_data', 'user_data'],
+                # },
+                # 'userchatparticipantmessage_extra': {
+                #     'user_last_deleted_at': {
+                #         'id': user_participant.id,
+                #         'last_deleted_at': user_participant.last_deleted_at
+                #     }
+                # },
                 'user': {
                     'fields': ['id', 'username']
                 }
@@ -1015,6 +1129,19 @@ class UserChatSerializerService:
     def serialize_message_for_chat(message : UserChatParticipantMessage):
         return UserChatParticipantMessageSerializer(
             message,
+            fields_exclude=['sender_data'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+    
+    @staticmethod
+    def serialize_messages_for_chat(messages: BaseManager[UserChatParticipantMessage] | list) -> UserChatParticipantMessageSerializer:
+        return UserChatParticipantMessageSerializer(
+            messages,
+            many=True,
             fields_exclude=['sender_data'],
             context={
                 'user': {
@@ -1115,6 +1242,84 @@ class InquiryService:
                 )
             )
         ).first()
+    
+    @staticmethod
+    def get_inquiry_messages(
+        inquiry_id: str, 
+        datetime_str: str = None
+    ) -> Tuple[QuerySet[InquiryMessage, dict[str, Any]], QuerySet[InquiryModeratorMessage, dict[str, Any]]]:
+        """
+        Retrieve the messages of an inquiry.
+
+        Args:
+            inquiry_id (str): The id of the inquiry.
+            datetime_str (str): The datetime string to filter the messages. Should be in the format of '%Y-%m-%dT%H:%M:%S.%fZ'.
+        
+        Returns:
+            Tuple[BaseManager[InquiryMessage], BaseManager[InquiryModeratorMessage]]: The queryset of the messages.
+        """
+        if not inquiry_id:
+            raise BadRequestError('Inquiry id is required.')
+        
+        if datetime_str is not None:
+            try:
+                datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            except ValueError:
+                raise BadRequestError('Invalid datetime string.')
+        
+        messages_qs = InquiryMessage.objects.filter(
+            inquiry__id=inquiry_id
+        ).order_by('-created_at').select_related(
+            'inquiry__user'
+        ).annotate(
+            user_type=Value('User', output_field=CharField()),
+            user_id=F('inquiry__user__id'),
+            user_username=F('inquiry__user__username')
+        ).values(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'user_type',
+            'user_id',
+            'user_username'
+        )
+
+        if datetime_str is not None:
+            datetime_obj = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            messages_qs = messages_qs.filter(created_at__lt=datetime_obj)
+        else:
+            messages_qs = messages_qs.filter(
+                created_at__lt=datetime.now(timezone.utc)
+            )
+
+        moderator_messages_qs = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry__id=inquiry_id
+        ).order_by('-created_at').select_related(
+            'inquiry_moderator__moderator'
+        ).annotate(
+            user_type=Value('Moderator', output_field=CharField()),
+            user_id=F('inquiry_moderator__moderator__id'),
+            user_username=F('inquiry_moderator__moderator__username')
+        ).values(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'user_type',
+            'user_id',
+            'user_username'
+        )
+
+        if datetime_str is not None:
+            datetime_obj = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            moderator_messages_qs = moderator_messages_qs.filter(created_at__lt=datetime_obj)
+        else:
+            moderator_messages_qs = moderator_messages_qs.filter(
+                created_at__lt=datetime.now(timezone.utc)
+            )
+
+        return messages_qs, moderator_messages_qs
     
 
 class InquirySerializerService:
@@ -1239,6 +1444,13 @@ class InquirySerializerService:
                     'fields': ['name']
                 }
             }
+        )
+    
+    @staticmethod
+    def serialize_inquiry_messages(messages) -> InquiryCommonMessageSerializer:
+        return InquiryCommonMessageSerializer(
+            messages,
+            many=True,
         )
     
 class PostCommentSerializerService:

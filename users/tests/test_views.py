@@ -841,31 +841,6 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse('unread_messages_count' in data['participants'][1])
         self.assertTrue('user_data' in data['participants'][0])
         self.assertTrue('user_data' in data['participants'][1])
-        self.assertTrue('messages' in data['participants'][0])
-        self.assertTrue('messages' in data['participants'][1])
-        self.assertEqual(len(data['participants'][0]['messages']), 0)
-        self.assertEqual(len(data['participants'][1]['messages']), 0)
-
-        # Create a message
-        UserChatParticipantMessage.objects.create(
-            sender=part1,
-            message="test message"
-        )
-        UserChatParticipantMessage.objects.create(
-            sender=part2,
-            message="test message"
-        )
-
-        response = view(request, user_id=user2.id)
-        data = response.data
-
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue('messages' in data['participants'][0])
-        self.assertTrue('messages' in data['participants'][1])
-        self.assertEqual(len(data['participants'][0]['messages']), 1)
-        self.assertEqual(len(data['participants'][1]['messages']), 1)
-        self.assertEqual(data['participants'][0]['messages'][0]['message'], 'test message')
-        self.assertEqual(data['participants'][1]['messages'][0]['message'], 'test message')
 
         # attempt to chat with oneself
         request = factory.get(
@@ -915,6 +890,96 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertTrue(user_participant.chat_deleted)
         self.assertIsNotNone(user_participant.last_deleted_at)
 
+    def test_get_chat_messages(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_chat_messages'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/chats/{user2.id}/messages/'
+        )
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('previous' in response.data)
+        self.assertTrue('next' in response.data)
+        self.assertTrue('results' in response.data)
+        self.assertEqual(len(response.data['results']), 0)
+
+        # Create 26 messages
+        for i in range(26):
+            UserChatParticipantMessage.objects.create(
+                sender=part1,
+                message=f'test message {i}'
+            )
+
+        response = view(request, user_id=user2.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('previous' in data)
+        self.assertIsNone(data['previous'])
+        self.assertTrue('next' in data)
+        self.assertIsNotNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 25)
+
+        for i in range(1, len(data['results'])):
+            datetime_0 = datetime.strptime(data['results'][i-1]['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            datetime_1 = datetime.strptime(data['results'][i]['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            self.assertTrue(datetime_0 < datetime_1)
+
+
+        next_url = data['next']
+
+        # Create 4 more messages
+        for i in range(4):
+            UserChatParticipantMessage.objects.create(
+                sender=part1,
+                message=f'test message {i}'
+            )
+
+        request = factory.get(next_url)
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('previous' in data)
+        self.assertIsNotNone(data['previous'])
+        self.assertTrue('next' in data)
+        self.assertIsNone(data['next'])
+
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 1)
+
+        message = data['results'][0]
+        self.assertEqual(message['message'], 'test message 0')
+
     @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
     def test_post_chat_message(self, mocked):
         user = User.objects.filter(username='testuser').first()
@@ -934,7 +999,7 @@ class UserAPIEndpointTestCase(APITestCase):
             chat=chat,
             user=user
         )
-        part2 = UserChatParticipant.objects.create(
+        UserChatParticipant.objects.create(
             chat=chat,
             user=user2
         )
@@ -955,7 +1020,6 @@ class UserAPIEndpointTestCase(APITestCase):
 
         message = UserChatParticipantMessage.objects.filter(sender=part1).first()
         self.assertEqual(message.message, 'test message')
-
 
     @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
     def test_mark_chat_messages_as_read(self, mocked):
@@ -1127,7 +1191,7 @@ class UserAPIEndpointTestCase(APITestCase):
         part1_last_deleted_at = part1.last_deleted_at
 
         # delete and re-enable the chat
-        UserChatService.delete_chat(request, user2.id)
+        UserChatService.delete_chat(request.user, user2.id)
         part1.refresh_from_db()
         part2.refresh_from_db()
 
@@ -1978,7 +2042,6 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         
         read_count = 0
-        page = 1
 
         request = factory.get(
             f'/api/users/me/notifications/'
