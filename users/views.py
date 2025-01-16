@@ -24,6 +24,7 @@ from management.models import (
     Inquiry, 
 )
 from management.serializers import (
+    InquiryCommonMessageSerializer,
     InquiryMessageCreateSerializer, 
     InquiryMessageSerializer, 
 )
@@ -140,6 +141,8 @@ class UserViewSet(ViewSet):
         elif self.action == 'get_inquiry':
             permission_classes=[IsAuthenticated]
         elif self.action == 'mark_inquiry_messages_as_read':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_inquiry_messages':
             permission_classes=[IsAuthenticated]
         elif self.action == 'post_inquiry_message':
             permission_classes=[IsAuthenticated]
@@ -582,32 +585,20 @@ class UserViewSet(ViewSet):
         user = request.user
         inquiry_exists = Inquiry.objects.filter(
             id=inquiry_id, 
-            user=user
+            user=user,
+            solved=False
         ).exists()
 
         if not inquiry_exists:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        serializer = InquiryMessageCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        message = serializer.save(
-            inquiry=inquiry_id
-        )
-        message_serializer = InquiryMessageSerializer(
-            message,
-            fields_exclude=['inquiry_data'],
-            context={
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
+        message = InquirySerializerService.create_inquiry_message(inquiry_id, request.data)
+        message_serializer = InquiryCommonMessageSerializer(message)
 
         inquiry = InquiryService.get_inquiry_by_id(inquiry_id)
-        inquiry.updated_at = datetime.now(timezone.utc)
         inquiry.save()
 
-        serializer = InquirySerializerService.serialize_inquiry_for_update(request, inquiry)
+        serializer = InquirySerializerService.serialize_inquiry_for_update(inquiry)
 
         send_update_to_all_parties_regarding_inquiry(
             inquiry,
@@ -616,7 +607,7 @@ class UserViewSet(ViewSet):
             serializer
         )
         
-        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+        return Response(status=HTTP_201_CREATED, data={'id': str(message['id'])})
     
     @action(
         detail=False,

@@ -103,6 +103,20 @@ class InquiryMessageCursorPagination:
         inquiry_id: str,
         request: Request
     ):
+        """
+        Returns a paginated list of inquiry messages.
+
+        Args:
+            inquiry_id (str): The id of the inquiry.
+            request (Request): The request object.
+        
+        Returns:
+            list: The paginated list of inquiry messages
+        
+        Raises:
+            BadRequestError: If the cursor is invalid.
+        """
+
         cursor = request.query_params.get(self.cursor_query_param)
         self.base_url = request.build_absolute_uri()
         cursor = self.decode_cursor(request)

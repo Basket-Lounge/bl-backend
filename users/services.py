@@ -9,12 +9,12 @@ from management.models import (
     InquiryModeratorMessage, 
     InquiryTypeDisplayName
 )
-from management.serializers import InquiryCommonMessageSerializer, InquirySerializer
+from management.serializers import InquiryCommonMessageSerializer, InquiryMessageCreateSerializer, InquirySerializer
 from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike, TeamName
 from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 
-from django.db.models import Q, Exists, OuterRef, Prefetch, Count, F
-from django.db.models import Value, CharField
+from django.db.models import Q, Exists, OuterRef, Prefetch, Count, F, Subquery
+from django.db.models import Value, CharField, DateTimeField, IntegerField
 from django.db.models.manager import BaseManager
 from django.db.models.query import QuerySet
 
@@ -343,67 +343,68 @@ def send_update_to_all_parties_regarding_inquiry(
     inquiry: Inquiry,
     user: User,
     message_serializer,
-    inquiry_update_serializer
+    inquiry_update_serializer: InquirySerializer
 ):
     inquiry_channel_name = f'users/inquiries/{inquiry.id}'
     send_message_to_centrifuge(
         inquiry_channel_name,
         message_serializer.data
     )
-    
+
     user_inquiry_notification_channel_name = f'users/{user.id}/inquiries/updates'
     send_message_to_centrifuge(
         user_inquiry_notification_channel_name,
         inquiry_update_serializer.data
     )
-    
-    for moderator in inquiry.inquirymoderator_set.all():
-        moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
 
-        inquiry_for_moderators_serializer = InquirySerializer(
-            inquiry,
-            fields_exclude=['user_data', 'messages'],
-            context={
-                'user': {
-                    'fields': ['id', 'username']
-                },
-                'inquirytypedisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
-                'inquirymessage_extra': {
-                    'user_last_read_at': {
-                        'id': moderator.moderator.id,
-                        'last_read_at': moderator.last_read_at
-                    }
-                },
-                'inquirymoderator': {
-                    'fields': ['moderator_data', 'last_message', 'unread_messages_count']
-                },
-                'moderator': {
-                    'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        'id': moderator.moderator.id,
-                        'last_read_at': moderator.last_read_at
-                    }
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
+    ## TODO: Fix this to reflect the changes in both the queryset and the serializer 
+    # for moderator in inquiry.inquirymoderator_set.all():
+    #     moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
 
-        send_message_to_centrifuge(
-            moderator_inquiry_notification_channel_name,
-            inquiry_for_moderators_serializer.data
-        )
+    #     inquiry_for_moderators_serializer = InquirySerializer(
+    #         inquiry,
+    #         fields_exclude=['user_data', 'messages'],
+    #         context={
+    #             'user': {
+    #                 'fields': ['id', 'username']
+    #             },
+    #             'inquirytypedisplayname': {
+    #                 'fields': ['display_name', 'language_data']
+    #             },
+    #             'inquirymessage': {
+    #                 'fields_exclude': ['inquiry_data', 'user_data']
+    #             },
+    #             'inquirymessage_extra': {
+    #                 'user_last_read_at': {
+    #                     'id': moderator.moderator.id,
+    #                     'last_read_at': moderator.last_read_at
+    #                 }
+    #             },
+    #             'inquirymoderator': {
+    #                 'fields': ['moderator_data', 'last_message', 'unread_messages_count']
+    #             },
+    #             'moderator': {
+    #                 'fields': ['id', 'username']
+    #             },
+    #             'inquirymoderatormessage': {
+    #                 'fields_exclude': ['inquiry_moderator_data', 'user_data']
+    #             },
+    #             'inquirymoderatormessage_extra': {
+    #                 'user_last_read_at': {
+    #                     'id': moderator.moderator.id,
+    #                     'last_read_at': moderator.last_read_at
+    #                 }
+    #             },
+    #             'language': {
+    #                 'fields': ['name']
+    #             }
+    #         }
+    #     )
+
+    #     send_message_to_centrifuge(
+    #         moderator_inquiry_notification_channel_name,
+    #         inquiry_for_moderators_serializer.data
+    #     )
 
 class UserService:
     @staticmethod
@@ -768,14 +769,6 @@ class UserChatService:
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                # UserChatParticipant.objects.prefetch_related(
-                #     Prefetch(
-                #         'userchatparticipantmessage_set',
-                #         queryset=UserChatParticipantMessage.objects.order_by('created_at')
-                #     ),
-                # ).select_related(
-                #     'user',
-                # )
                 UserChatParticipant.objects.select_related(
                     'user'
                 )
@@ -1064,15 +1057,6 @@ class UserChatSerializerService:
                 'userchatparticipant': {
                     'fields': ['user_data']
                 },
-                # 'userchatparticipantmessage': {
-                #     'fields_exclude': ['sender_data', 'user_data'],
-                # },
-                # 'userchatparticipantmessage_extra': {
-                #     'user_last_deleted_at': {
-                #         'id': user_participant.id,
-                #         'last_deleted_at': user_participant.last_deleted_at
-                #     }
-                # },
                 'user': {
                     'fields': ['id', 'username']
                 }
@@ -1154,6 +1138,27 @@ class UserChatSerializerService:
 class InquiryService:
     @staticmethod
     def get_my_inquiries(request):
+        latest_message_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_message_created_at_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('created_at')[:1]
+
+        unread_messages_count_subquery = Count(
+            'inquirymoderator__inquirymoderatormessage',
+            filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+        )
+
+        latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('created_at')[:1]
+
         return Inquiry.objects.filter(user=request.user).order_by('-created_at').select_related(
             'inquiry_type',
             'user'
@@ -1165,25 +1170,44 @@ class InquiryService:
                 )
             ),
             Prefetch(
-                'messages',
-                queryset=InquiryMessage.objects.order_by('-created_at')
-            ),
-            Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
                     'inquiry',
                     'moderator'
-                ).prefetch_related(
-                    Prefetch(
-                        'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
-                    )
+                ).annotate(
+                    last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                    last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
                 )
             )
+        ).annotate(
+            last_message=Subquery(latest_message_subquery, output_field=CharField()),
+            last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+            unread_messages_count=unread_messages_count_subquery
         )
     
     @staticmethod
     def get_inquiry(request, inquiry_id):
+        latest_message_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_message_created_at_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('created_at')[:1]
+
+        unread_messages_count_subquery = Count(
+            'inquirymoderator__inquirymoderatormessage',
+            filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+        )
+
+        latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('created_at')[:1]
+
         return Inquiry.objects.filter(
             id=inquiry_id, 
             user=request.user
@@ -1198,24 +1222,44 @@ class InquiryService:
                 )
             ),
             Prefetch(
-                'messages',
-                queryset=InquiryMessage.objects.order_by('-created_at')
-            ),
-            Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
+                    'inquiry',
                     'moderator'
-                ).prefetch_related(
-                    Prefetch(
-                        'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
-                    )
+                ).annotate(
+                    last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                    last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
                 )
             )
+        ).annotate(
+            last_message=Subquery(latest_message_subquery, output_field=CharField()),
+            last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+            unread_messages_count=unread_messages_count_subquery
         ).first()
 
     @staticmethod
     def get_inquiry_by_id(inquiry_id):
+        latest_message_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_message_created_at_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('created_at')[:1]
+
+        unread_messages_count_subquery = Count(
+            'inquirymoderator__inquirymoderatormessage',
+            filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+        )
+
+        latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('created_at')[:1]
+
         return Inquiry.objects.filter(id=inquiry_id).select_related(
             'inquiry_type',
             'user'
@@ -1227,20 +1271,19 @@ class InquiryService:
                 )
             ),
             Prefetch(
-                'messages',
-                queryset=InquiryMessage.objects.order_by('-created_at')
-            ),
-            Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
+                    'inquiry',
                     'moderator'
-                ).prefetch_related(
-                    Prefetch(
-                        'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
-                    )
+                ).annotate(
+                    last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                    last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
                 )
             )
+        ).annotate(
+            last_message=Subquery(latest_message_subquery, output_field=CharField()),
+            last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+            unread_messages_count=unread_messages_count_subquery
         ).first()
     
     @staticmethod
@@ -1268,7 +1311,7 @@ class InquiryService:
                 raise BadRequestError('Invalid datetime string.')
         
         messages_qs = InquiryMessage.objects.filter(
-            inquiry__id=inquiry_id
+            inquiry__id=inquiry_id,
         ).order_by('-created_at').select_related(
             'inquiry__user'
         ).annotate(
@@ -1294,7 +1337,7 @@ class InquiryService:
             )
 
         moderator_messages_qs = InquiryModeratorMessage.objects.filter(
-            inquiry_moderator__inquiry__id=inquiry_id
+            inquiry_moderator__inquiry__id=inquiry_id,
         ).order_by('-created_at').select_related(
             'inquiry_moderator__moderator'
         ).annotate(
@@ -1324,14 +1367,26 @@ class InquiryService:
 
 class InquirySerializerService:
     @staticmethod
+    def create_inquiry_message(inquiry_id, data: dict[str, str]) -> InquiryMessage:
+        if not inquiry_id:
+            raise BadRequestError('Inquiry id is required.')
+        
+        if not "message" in data:
+            raise BadRequestError('Message is required.')
+
+        serializer = InquiryMessageCreateSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        return serializer.save(
+            inquiry=inquiry_id
+        )
+
+    @staticmethod
     def serialize_inquiries(request, inquiries):
         return InquirySerializer(
             inquiries,
             many=True,
             fields_exclude=[
                 'user_data', 
-                'unread_messages_count', 
-                'messages'
             ],
             context={
                 'inquiry': {
@@ -1340,30 +1395,14 @@ class InquirySerializerService:
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
                 'inquirymoderator': {
                     'fields': [
                         'moderator_data', 
                         'last_message',
-                        'unread_messages_count'
                     ]
                 },
                 'moderator': {
                     'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        inquiry.id: {
-                            'id': request.user.id, 
-                            'last_read_at': inquiry.last_read_at
-                        }
-                        for inquiry in inquiries
-                    }
                 },
                 'language': {
                     'fields': ['name']
@@ -1403,13 +1442,11 @@ class InquirySerializerService:
         )
     
     @staticmethod
-    def serialize_inquiry_for_update(request, inquiry):
+    def serialize_inquiry_for_update(inquiry):
         return InquirySerializer(
             inquiry,
             fields_exclude=[
                 'user_data', 
-                'messages', 
-                'unread_messages_count'
             ],
             context={
                 'user': {
@@ -1418,27 +1455,14 @@ class InquirySerializerService:
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
                 'inquirymoderator': {
                     'fields': [
                         'moderator_data', 
                         'last_message', 
-                        'unread_messages_count'
                     ]
                 },
                 'moderator': {
                     'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        'id': request.user.id,
-                        'last_read_at': inquiry.last_read_at
-                    }
                 },
                 'language': {
                     'fields': ['name']
