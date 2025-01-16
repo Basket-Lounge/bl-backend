@@ -116,7 +116,7 @@ class InquiryModeratorMessage(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f'{self.moderator} in {self.inquiry}'
+        return f'{self.inquiry_moderator.moderator.username} in {self.inquiry_moderator.inquiry.id}'
 
 class InquiryMessage(models.Model):
     id = models.UUIDField(

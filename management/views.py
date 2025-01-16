@@ -24,6 +24,7 @@ from management.services.models_services import (
     filter_and_fetch_inquiry
 )
 from management.services.serializers_services import (
+    InquiryModeratorSerializerService,
     PostManagementSerializerService,
     UserManagementSerializerService,
     InquirySerializerService,
@@ -322,7 +323,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path='messages'
     )
     def send_message(self, request, pk=None):
-        message, error, status = InquiryModeratorService.create_message_for_inquiry(request, pk)
+        message, error, status = InquiryModeratorSerializerService.create_message_for_inquiry(request, pk)
         if not message:
             return Response(status=status, data=error)
 
