@@ -23,11 +23,6 @@ from games.models import Game
 from management.models import (
     Inquiry, 
 )
-from management.serializers import (
-    InquiryCommonMessageSerializer,
-    InquiryMessageCreateSerializer, 
-    InquiryMessageSerializer, 
-)
 from notification.services.models_services import NotificationService
 from notification.services.serializers_services import NotificationSerializerService
 from notification.utils import get_notification_pagination_class
@@ -54,9 +49,9 @@ from users.services import (
     UserService, 
     UserViewService, 
     send_update_to_all_parties_regarding_chat, 
-    send_update_to_all_parties_regarding_inquiry
 )
 
+from users.tasks import broadcast_inquiry_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_to_all_parties
 from users.utils import (
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
@@ -540,17 +535,17 @@ class UserViewSet(ViewSet):
     )
     def mark_inquiry_messages_as_read(self, request, inquiry_id):
         user = request.user
-        inquiry = Inquiry.objects.filter(
-            id=inquiry_id, 
-            user=user
-        ).first()
-
-        if not inquiry:
+        inquiry_exists = InquiryService.check_inquiry_exists(
+            id=inquiry_id,
+            user_id=user.id,
+        )
+        if not inquiry_exists:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        updated = Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
-        if not updated:
-            return Response(status=HTTP_400_BAD_REQUEST)
+        InquiryService.mark_inquiry_as_read(inquiry_id)
+        InquiryService.update_updated_at(inquiry_id)
+
+        broadcast_inquiry_updates_to_all_parties.delay(inquiry_id)
 
         return Response(status=HTTP_200_OK)
     
@@ -582,30 +577,16 @@ class UserViewSet(ViewSet):
 
     @get_inquiry_messages.mapping.post 
     def post_inquiry_message(self, request, inquiry_id):
-        user = request.user
-        inquiry_exists = Inquiry.objects.filter(
-            id=inquiry_id, 
-            user=user,
+        inquiry_exists = InquiryService.check_inquiry_exists(
+            id=inquiry_id,
+            user_id=request.user.id,
             solved=False
-        ).exists()
-
+        )
         if not inquiry_exists:
             return Response(status=HTTP_404_NOT_FOUND)
 
         message = InquirySerializerService.create_inquiry_message(inquiry_id, request.data)
-        message_serializer = InquiryCommonMessageSerializer(message)
-
-        inquiry = InquiryService.get_inquiry_by_id(inquiry_id)
-        inquiry.save()
-
-        serializer = InquirySerializerService.serialize_inquiry_for_update(inquiry)
-
-        send_update_to_all_parties_regarding_inquiry(
-            inquiry,
-            user,
-            message_serializer,
-            serializer
-        )
+        broadcast_inquiry_updates_for_new_message_to_all_parties.delay(inquiry_id, message['id'])
         
         return Response(status=HTTP_201_CREATED, data={'id': str(message['id'])})
     

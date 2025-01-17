@@ -358,53 +358,35 @@ def send_update_to_all_parties_regarding_inquiry(
     )
 
     ## TODO: Fix this to reflect the changes in both the queryset and the serializer 
-    # for moderator in inquiry.inquirymoderator_set.all():
-    #     moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
+    for moderator in inquiry.inquirymoderator_set.all():
+        moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
 
-    #     inquiry_for_moderators_serializer = InquirySerializer(
-    #         inquiry,
-    #         fields_exclude=['user_data', 'messages'],
-    #         context={
-    #             'user': {
-    #                 'fields': ['id', 'username']
-    #             },
-    #             'inquirytypedisplayname': {
-    #                 'fields': ['display_name', 'language_data']
-    #             },
-    #             'inquirymessage': {
-    #                 'fields_exclude': ['inquiry_data', 'user_data']
-    #             },
-    #             'inquirymessage_extra': {
-    #                 'user_last_read_at': {
-    #                     'id': moderator.moderator.id,
-    #                     'last_read_at': moderator.last_read_at
-    #                 }
-    #             },
-    #             'inquirymoderator': {
-    #                 'fields': ['moderator_data', 'last_message', 'unread_messages_count']
-    #             },
-    #             'moderator': {
-    #                 'fields': ['id', 'username']
-    #             },
-    #             'inquirymoderatormessage': {
-    #                 'fields_exclude': ['inquiry_moderator_data', 'user_data']
-    #             },
-    #             'inquirymoderatormessage_extra': {
-    #                 'user_last_read_at': {
-    #                     'id': moderator.moderator.id,
-    #                     'last_read_at': moderator.last_read_at
-    #                 }
-    #             },
-    #             'language': {
-    #                 'fields': ['name']
-    #             }
-    #         }
-    #     )
+        inquiry_for_moderators_serializer = InquirySerializer(
+            inquiry,
+            fields_exclude=['user_data', 'unread_messages_count'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'inquirytypedisplayname': {
+                    'fields': ['display_name', 'language_data']
+                },
+                'inquirymoderator': {
+                    'fields': ['moderator_data', 'last_message']
+                },
+                'moderator': {
+                    'fields': ['id', 'username']
+                },
+                'language': {
+                    'fields': ['name']
+                }
+            }
+        )
 
-    #     send_message_to_centrifuge(
-    #         moderator_inquiry_notification_channel_name,
-    #         inquiry_for_moderators_serializer.data
-    #     )
+        send_message_to_centrifuge(
+            moderator_inquiry_notification_channel_name,
+            inquiry_for_moderators_serializer.data
+        )
 
 class UserService:
     @staticmethod
@@ -1363,6 +1345,21 @@ class InquiryService:
             )
 
         return messages_qs, moderator_messages_qs
+
+    @staticmethod 
+    def check_inquiry_exists(**kwargs):
+        return Inquiry.objects.filter(
+            **kwargs
+        ).exists()
+    
+    @staticmethod
+    def mark_inquiry_as_read(inquiry_id):
+        Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
+
+    @staticmethod
+    def update_updated_at(inquiry_id: str):
+        inquiry = Inquiry.objects.get(id=inquiry_id)
+        inquiry.save()
     
 
 class InquirySerializerService:
