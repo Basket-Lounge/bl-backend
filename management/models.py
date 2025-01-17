@@ -84,7 +84,7 @@ class Inquiry(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f'{self.user} inquired about {self.type}'
+        return f'{self.user} inquired about {self.inquiry_type}'
     
 class InquiryModerator(models.Model):
     id = models.UUIDField(

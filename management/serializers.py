@@ -86,6 +86,8 @@ class InquiryMessageCreateSerializer(serializers.Serializer):
             message=validated_data['message'],
         )
 
+        inquiry.save()
+
         message = InquiryMessage.objects.filter(
             id=message.id
         ).order_by('-created_at').select_related(
@@ -215,6 +217,7 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
     moderator_data = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     unread_messages_count = serializers.SerializerMethodField()
+    unread_other_moderators_messages_count = serializers.SerializerMethodField()
 
     class Meta:
         model = InquiryModerator
@@ -259,29 +262,16 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
         return last_message
     
     def get_unread_messages_count(self, obj):
-        if not hasattr(obj, 'inquirymoderatormessage_set'):
+        if not hasattr(obj, 'unread_messages_count'):
+            return None
+        return obj.unread_messages_count
+    
+    def get_unread_other_moderators_messages_count(self, obj):
+        if not hasattr(obj, 'unread_other_moderators_messages_count'):
             return None
         
-        context = self.context.get('inquirymoderatormessage_extra', {})
-        user_last_read_at = context.get('user_last_read_at', None)
-        if not user_last_read_at:
-            return None
+        return obj.unread_other_moderators_messages_count
 
-        inquiry_id = obj.inquiry.id 
-        if not user_last_read_at.get(inquiry_id, None):
-            return None
-        
-        user_last_read_at = user_last_read_at[inquiry_id]
-        count = 0
-        if obj.moderator.id != user_last_read_at['id']:
-            last_read_at = user_last_read_at.get('last_read_at', None)
-            for message in obj.inquirymoderatormessage_set.all():
-                if message.created_at > last_read_at:
-                    count += 1
-                else:
-                    break
-
-        return count
 
 
 class InquiryMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -384,7 +374,6 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
             return None
         
         return obj.unread_messages_count
-
     
 class InquiryCommonMessageSerializer(serializers.Serializer):
     id = serializers.UUIDField()
