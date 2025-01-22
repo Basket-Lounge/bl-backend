@@ -1,3 +1,9 @@
+from rest_framework_simplejwt.exceptions import AuthenticationFailed
+from rest_framework.status import HTTP_403_FORBIDDEN
+
+from django.utils.translation import gettext_lazy as _
+
+
 class CustomError(Exception):
     def __init__(self, message, code):
         self.message = message
@@ -81,3 +87,9 @@ class MethodNotAllowedError(Error405):
 class InternalServerError(Error500):
     def __init__(self):
         super().__init__('Internal server error. Please try again later.')
+
+
+class ForbiddenResource(AuthenticationFailed):
+    status_code = HTTP_403_FORBIDDEN 
+    default_detail = _("User does not have permission to access this resource.")
+    default_code = "permission_denied"

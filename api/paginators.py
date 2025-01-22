@@ -4,8 +4,6 @@ from django.db import connection, transaction
 from django.db.utils import OperationalError
 from django.utils.functional import cached_property
 
-from django.db.models.manager import BaseManager
-
 from rest_framework.pagination import PageNumberPagination, CursorPagination
 from rest_framework.response import Response
 from rest_framework.request import Request
@@ -13,7 +11,7 @@ from rest_framework.utils.urls import replace_query_param
 
 from api.exceptions import BadRequestError
 from management.models import InquiryMessage
-from users.services import InquiryService
+from users.services.models_services import InquiryService
 
 
 class LargeTablePaginator(Paginator):
@@ -137,14 +135,14 @@ class InquiryMessageCursorPagination:
         for message in inquiry_moderator_messages:
             new_inquiry_messages.append(message)
 
-        new_inquiry_messages.sort(key=lambda x: x['created_at'], reverse=True)
+        new_inquiry_messages.sort(key=lambda x: x.created_at, reverse=True)
         new_inquiry_messages = new_inquiry_messages[:self.page_size + 1]
         new_inquiry_messages.reverse()
 
         # Set the next cursor if there are more results
         self.next_cursor = None
         if len(new_inquiry_messages) > self.page_size:
-            next_cursor = new_inquiry_messages[1]['created_at'].strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            next_cursor = new_inquiry_messages[1].created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
             new_inquiry_messages = new_inquiry_messages[1:]
             self.next_cursor = self.encode_cursor(next_cursor)
 
