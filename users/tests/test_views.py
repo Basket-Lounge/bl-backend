@@ -13,7 +13,7 @@ from notification.models import Notification, NotificationRecipient, Notificatio
 from notification.services.models_services import NotificationService
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
-from users.services import UserChatService
+from users.services.models_services import UserChatService
 from users.views import JWTViewSet, UserViewSet
 
 from unittest.mock import patch
@@ -1071,8 +1071,8 @@ class UserAPIEndpointTestCase(APITestCase):
         part1.refresh_from_db()
         part2.refresh_from_db()
 
-        self.assertEqual(part1_last_read_at, part1.last_read_at)
-        self.assertNotEqual(part2.last_read_at, part2_last_read_at)
+        self.assertNotEqual(part1_last_read_at, part1.last_read_at)
+        self.assertEqual(part2.last_read_at, part2_last_read_at)
 
     
     def test_block_chat(self):
@@ -1174,7 +1174,7 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertTrue(part1.chat_blocked)
         self.assertFalse(part2.chat_blocked)
         part1_last_blocked_at = part1.last_blocked_at
-        part2_last_read_at = part2.last_read_at
+        part1_last_read_at = part1.last_read_at
 
         response = view(request, pk=user2.id)
         part1.refresh_from_db()
@@ -1185,10 +1185,10 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse(part2.chat_blocked)
         self.assertFalse(part2.chat_deleted)
         self.assertNotEqual(part1_last_blocked_at, part1.last_blocked_at) 
-        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
+        self.assertNotEqual(part1_last_read_at, part1.last_read_at)
         
-        part2_last_read_at = part2.last_read_at
         part1_last_deleted_at = part1.last_deleted_at
+        part1_last_read_at = part1.last_read_at
 
         # delete and re-enable the chat
         UserChatService.delete_chat(request.user, user2.id)
@@ -1196,12 +1196,10 @@ class UserAPIEndpointTestCase(APITestCase):
         part2.refresh_from_db()
 
         self.assertTrue(part1.chat_deleted)
-        self.assertNotEqual(part1_last_deleted_at, part1.last_deleted_at)
         self.assertFalse(part2.chat_deleted)
-        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
 
-        part2_last_read_at = part2.last_read_at
         part1_last_deleted_at = part1.last_deleted_at
+        part1_last_read_at = part1.last_read_at
 
         response = view(request, pk=user2.id)
         part1.refresh_from_db()
@@ -1212,8 +1210,7 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse(part2.chat_deleted)
         self.assertFalse(part2.chat_blocked)
         self.assertNotEqual(part1_last_deleted_at, part1.last_deleted_at)
-        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
-
+        self.assertNotEqual(part1_last_read_at, part1.last_read_at)
 
     def test_post_like(self):
         user = User.objects.filter(username='testuser').first()
@@ -1412,8 +1409,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(len(data['results']), 1)
         self.assertEqual(data['results'][0]['title'], 'test title')
         self.assertFalse('messages' in data['results'][0])
-        self.assertFalse('unread_messages_count' in data['results'][0])
-        self.assertFalse('user_data' in data['results'][0])
+        self.assertTrue('unread_messages_count' in data['results'][0])
+        self.assertTrue('user_data' in data['results'][0])
         self.assertTrue('last_message' in data['results'][0])
         self.assertTrue('inquiry_type_data' in data['results'][0])
         self.assertTrue('moderators' in data['results'][0])
@@ -1445,6 +1442,10 @@ class UserAPIEndpointTestCase(APITestCase):
                 inquiry_moderator=moderator,
                 message='test message'
             )
+            InquiryModeratorMessage.objects.create(
+                inquiry_moderator=moderator,
+                message='test message'
+            )
 
         response = view(request)
         data = response.data
@@ -1457,22 +1458,25 @@ class UserAPIEndpointTestCase(APITestCase):
 
         for inquiry in data['results']:
             self.assertEqual(inquiry['title'], 'test title')
-            self.assertFalse('messages' in inquiry)
-            self.assertFalse('unread_messages_count' in inquiry)
-            self.assertFalse('user_data' in inquiry)
+            self.assertTrue('unread_messages_count' in inquiry)
+            self.assertTrue('user_data' in inquiry)
             self.assertTrue('last_message' in inquiry)
             self.assertTrue('inquiry_type_data' in inquiry)
             self.assertTrue('moderators' in inquiry)
             self.assertTrue('moderator_data' in inquiry['moderators'][0])
             self.assertTrue('last_message' in inquiry['moderators'][0])
-            self.assertTrue('unread_messages_count' in inquiry['moderators'][0])
+            self.assertFalse('unread_messages_count' in inquiry['moderators'][0])
+
+            self.assertTrue('id' in inquiry['user_data'])
+            self.assertTrue('username' in inquiry['user_data'])
+            self.assertTrue('favorite_team' in inquiry['user_data'])
+            self.assertEqual(inquiry['unread_messages_count'], 2)
             self.assertEqual(inquiry['last_message']['message'], 'test message')
             self.assertEqual(inquiry['inquiry_type_data']['name'], inquiry_type.name) 
             self.assertEqual(len(inquiry['moderators']), 1)
             self.assertEqual(inquiry['moderators'][0]['moderator_data']['username'], admin.username)
             self.assertEqual(inquiry['moderators'][0]['last_message']['message'], 'test message')
-            self.assertEqual(inquiry['moderators'][0]['unread_messages_count'], 1)
-    
+
     def test_get_inquiry(self):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -1524,21 +1528,110 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse('user_data' in data)
         self.assertFalse('last_message' in data)
         self.assertFalse('unread_messages_count' in data)
-        self.assertTrue('messages' in data)
         self.assertTrue('inquiry_type_data' in data)
         self.assertTrue('moderators' in data)
         self.assertEqual(data['inquiry_type_data']['name'], inquiry_type.name)
         self.assertEqual(len(data['moderators']), 1)
-        self.assertEqual(len(data['messages']), 1)
-        self.assertEqual(data['messages'][0]['message'], 'test message')
         self.assertFalse('last_message' in data['moderators'][0])
         self.assertFalse('unread_messages_count' in data['moderators'][0])
         self.assertFalse('inquiry_data' in data['moderators'][0])
-        self.assertTrue('messages' in data['moderators'][0])
         self.assertTrue('moderator_data' in data['moderators'][0])
         self.assertEqual(data['moderators'][0]['moderator_data']['username'], admin.username)
-        self.assertEqual(len(data['moderators'][0]['messages']), 1)
-        self.assertEqual(data['moderators'][0]['messages'][0]['message'], 'test message')
+
+    def test_get_inquiry_messages(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        admin = User.objects.filter(username='testadmin').first()
+        if not admin:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_inquiry_messages'})
+
+        # Create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+        InquiryMessage.objects.create(
+            inquiry=inquiry,
+            message='test message',
+        )
+
+        moderator = InquiryModerator.objects.create(
+            inquiry=inquiry,
+            moderator=admin
+        )
+        InquiryModeratorMessage.objects.create(
+            inquiry_moderator=moderator,
+            message='test message'
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/inquiries/{inquiry.id}/messages/'
+        )
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('next' in data)
+        self.assertIsNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 2)
+        self.assertEqual(data['results'][0]['message'], 'test message')
+        self.assertEqual(data['results'][1]['message'], 'test message')
+
+        # Create 26 messages
+        for i in range(26):
+            InquiryMessage.objects.create(
+                inquiry=inquiry,
+                message=f'test message {i}'
+            )
+
+        response = view(request, inquiry_id=inquiry.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse('previous' in data)
+        self.assertTrue('next' in data)
+        self.assertIsNotNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 25)
+
+        last_datetime = data['results'][0]['created_at']
+        for i in range(1, len(data['results'])):
+            current_datetime = data['results'][i]['created_at']
+            self.assertTrue(datetime.strptime(last_datetime, '%Y-%m-%dT%H:%M:%S.%fZ') < datetime.strptime(current_datetime, '%Y-%m-%dT%H:%M:%S.%fZ'))
+        
+        next_url = data['next']
+        
+        request = factory.get(next_url)
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse('previous' in data)
+        self.assertTrue('next' in data)
+        self.assertIsNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 3)
+
+        last_datetime = data['results'][0]['created_at']
+        for i in range(1, len(data['results'])):
+            current_datetime = data['results'][i]['created_at']
+            self.assertTrue(datetime.strptime(last_datetime, '%Y-%m-%dT%H:%M:%S.%fZ') < datetime.strptime(current_datetime, '%Y-%m-%dT%H:%M:%S.%fZ'))
 
     def test_mark_inquiry_messages_as_read(self):
         user = User.objects.filter(username='testuser').first()

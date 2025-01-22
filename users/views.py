@@ -39,19 +39,21 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 from dj_rest_auth.registration.views import SocialLoginView
 
-from users.services import (
-    InquirySerializerService, 
+from users.services.models_services import (
     InquiryService,
-    PostCommentSerializerService, 
-    UserChatSerializerService, 
     UserChatService, 
-    UserSerializerService, 
     UserService, 
     UserViewService, 
+)
+from users.services.serializers_services import (
+    InquirySerializerService, 
+    PostCommentSerializerService, 
+    UserChatSerializerService, 
+    UserSerializerService, 
     send_update_to_all_parties_regarding_chat, 
 )
 
-from users.tasks import broadcast_inquiry_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_to_all_parties
+from users.tasks import broadcast_chat_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_to_all_parties
 from users.utils import (
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
@@ -339,9 +341,7 @@ class UserViewSet(ViewSet):
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        user_participant = chat.userchatparticipant_set.all().get(user=user)
-        serializer = UserChatSerializerService.serialize_chat(chat, user_participant)
-
+        serializer = UserChatSerializerService.serialize_chat(chat)
         return Response(serializer.data)
 
     @get_chat.mapping.delete
@@ -361,12 +361,12 @@ class UserViewSet(ViewSet):
         if user_id == request.user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        chat = UserChatService.get_user_chat(request.user, user_id)
-        if not chat:
+        chat_id = UserChatService.check_chat_exists(request.user, user_id)
+        if not chat_id:
             return Response(status=HTTP_404_NOT_FOUND)
 
         try: 
-            messages = UserChatService.get_chat_messages(chat, request.user)
+            messages = UserChatService.get_chat_messages(chat_id, request.user)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
         
@@ -383,23 +383,17 @@ class UserViewSet(ViewSet):
         if user_id == request.user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        message, chat = UserChatService.create_chat_message(request, user_id)
+        message, chat = UserChatSerializerService.create_chat_message(request, user_id)
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
-
-        message_serializer = UserChatSerializerService.serialize_message_for_chat(message)
-
-        chat = UserChatService.get_chat_by_id(chat.id)
-        chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
-
-        send_update_to_all_parties_regarding_chat(
-            request,
-            user_id,
-            chat.id,
-            chat_serializer,
-            message_serializer
-        )
         
+        broadcast_chat_updates_for_new_message_to_all_parties.delay(
+            chat.id, 
+            message.id, 
+            request.user.id, 
+            user_id
+        )
+
         return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
     
     @action(
@@ -416,7 +410,7 @@ class UserViewSet(ViewSet):
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        chat.refresh_from_db()
+        chat = UserChatService.get_chat_by_id(chat.id)
         chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
 
         sender_chat_notification_channel_name = f'users/{user.id}/chats/updates'
@@ -506,7 +500,10 @@ class UserViewSet(ViewSet):
         url_path=r'me/inquiries',
     )
     def get_inquiries(self, request):
-        inquiries = InquiryService.get_my_inquiries(request)
+        try:
+            inquiries = InquiryService.get_my_inquiries_with_request(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(inquiries, request)
@@ -521,7 +518,7 @@ class UserViewSet(ViewSet):
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)',
     )
     def get_inquiry(self, request, inquiry_id):
-        inquiry = InquiryService.get_inquiry(request, inquiry_id)
+        inquiry = InquiryService.get_inquiry_with_request(request, inquiry_id)
         if not inquiry:
             return Response(status=HTTP_404_NOT_FOUND)
         
