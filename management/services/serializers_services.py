@@ -1,4 +1,5 @@
 from typing import List
+from api.exceptions import NotFoundError
 from api.websocket import broadcast_message_to_centrifuge, send_message_to_centrifuge
 from management.models import (
     Inquiry, 
@@ -29,6 +30,10 @@ from rest_framework.status import HTTP_404_NOT_FOUND, HTTP_400_BAD_REQUEST
 from teams.models import Post 
 from users.models import User
 from users.serializers import PostSerializer, PostUpdateSerializer, UserSerializer
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 post_queryset_allowed_order_by_fields = (
@@ -77,7 +82,7 @@ def send_inquiry_notification_to_all_channels_for_moderators(inquiry: Inquiry) -
         fields_exclude=['unread_messages_count'],
         context={
             'user': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
             },
             'inquirytypedisplayname': {
                 'fields': ['display_name', 'language_data']
@@ -90,7 +95,10 @@ def send_inquiry_notification_to_all_channels_for_moderators(inquiry: Inquiry) -
                 ]
             },
             'moderator': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
+            },
+            'team': {
+                'fields': ['id', 'symbol']
             },
             'language': {
                 'fields': ['name']
@@ -118,7 +126,7 @@ def send_inquiry_notification_to_all_channels_for_moderators(inquiry: Inquiry) -
         moderator_inquiry_serializer.data
     )
     if resp_json.get('error', None):
-        print(f"Error sending message to {channel_names}: {resp_json['error']}")
+        logger.error(f"Error sending message to {channel_names}: {resp_json['error']}")
 
 
 def send_inquiry_notification_to_specific_moderator(
@@ -130,7 +138,7 @@ def send_inquiry_notification_to_specific_moderator(
         fields_exclude=['unread_messages_count'],
         context={
             'user': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
             },
             'inquirytypedisplayname': {
                 'fields': ['display_name', 'language_data']
@@ -145,7 +153,10 @@ def send_inquiry_notification_to_specific_moderator(
                 ]
             },
             'moderator': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
+            },
+            'team': {
+                'fields': ['id', 'symbol']
             },
             'language': {
                 'fields': ['name']
@@ -159,7 +170,7 @@ def send_inquiry_notification_to_specific_moderator(
         inquiry_serializer.data
     )
     if resp_json.get('error', None):
-        print(f"Error sending message to {moderator_inquiry_notification_channel_name}: {resp_json['error']}")
+        logger.error(f"Error sending message to {moderator_inquiry_notification_channel_name}: {resp_json['error']}")
 
 
 def send_inquiry_notification_to_user(
@@ -169,7 +180,7 @@ def send_inquiry_notification_to_user(
         inquiry,
         context={
             'user': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
             },
             'inquirytypedisplayname': {
                 'fields': ['display_name', 'language_data']
@@ -178,11 +189,14 @@ def send_inquiry_notification_to_user(
                 'fields': [
                     'moderator_data', 
                     'last_message', 
-                    'in_charge'
+                    'in_charge',
                 ]
             },
             'moderator': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
+            },
+            'team': {
+                'fields': ['id', 'symbol']
             },
             'language': {
                 'fields': ['name']
@@ -196,7 +210,7 @@ def send_inquiry_notification_to_user(
         inquiry_serializer.data
     )
     if resp_json.get('error', None):
-        print(f"Error sending message to {user_inquiry_notification_channel_name}: {resp_json['error']}")
+        logger.error(f"Error sending message to {user_inquiry_notification_channel_name}: {resp_json['error']}")
 
 
 def send_inquiry_message_to_live_chat(
@@ -218,7 +232,7 @@ def send_inquiry_message_to_live_chat(
         data
     )
     if resp_json.get('error', None):
-        print(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
+        logger.error(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
 
 
 def send_new_moderator_to_live_chat(
@@ -285,7 +299,7 @@ def send_new_moderator_to_live_chat(
         type='new_moderator'
     )
     if resp_json.get('error', None):
-        print(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
+        logger.error(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
 
 
 def send_unassigned_inquiry_to_live_chat(
@@ -397,14 +411,17 @@ def send_partially_updated_inquiry_to_live_chat(
         print(f"Error sending message to {inquiry_channel_name}: {resp_json['error']}")
 
 
-def serialize_inquiries_for_list(inquiries: List[Inquiry]) -> InquirySerializer:
+def _serialize_inquiries_for_list(inquiries: List[Inquiry]) -> InquirySerializer:
     return InquirySerializer(
         inquiries,
         many=True,
         fields_exclude=['unread_messages_count'],
         context={
             'user': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
+            },
+            'team': {
+                'fields': ['id', 'symbol']
             },
             'inquirytypedisplayname': {
                 'fields': ['display_name', 'language_data']
@@ -413,7 +430,7 @@ def serialize_inquiries_for_list(inquiries: List[Inquiry]) -> InquirySerializer:
                 'fields': ['moderator_data', 'last_message', 'in_charge']
             },
             'moderator': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
             },
             'language': {
                 'fields': ['name']
@@ -421,7 +438,7 @@ def serialize_inquiries_for_list(inquiries: List[Inquiry]) -> InquirySerializer:
         }
     )
 
-def serialize_inquiries_for_specific_moderator(
+def _serialize_inquiries_for_specific_moderator(
     inquiries: List[Inquiry],
 ) -> InquirySerializer:
     return InquirySerializer(
@@ -430,7 +447,7 @@ def serialize_inquiries_for_specific_moderator(
         fields_exclude=['unread_messages_count'],
         context={
             'user': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
             },
             'inquirytypedisplayname': {
                 'fields': ['display_name', 'language_data']
@@ -445,7 +462,10 @@ def serialize_inquiries_for_specific_moderator(
                 ]
             },
             'moderator': {
-                'fields': ['username', 'id']
+                'fields': ['username', 'id', 'favorite_team']
+            },
+            'team': {
+                'fields': ['id', 'symbol']
             },
             'language': {
                 'fields': ['name']
@@ -484,12 +504,12 @@ def serialize_inquiry_for_specific_moderator(
         }
     )
 
-def serialize_inquiry(
+def _serialize_inquiry(
    inquiry: Inquiry,
 ):
     return InquirySerializer(
         inquiry,
-        fields_exclude=['unread_messages_count'],
+        fields_exclude=['unread_messages_count', 'last_message'],
         context={
             'user': {
                 'fields': ['username', 'id']
@@ -501,7 +521,8 @@ def serialize_inquiry(
                 'fields': [
                     'moderator_data', 
                     'messages', 
-                    'in_charge'
+                    'in_charge',
+                    'last_read_at',
                 ]
             },
             'moderator': {
@@ -568,30 +589,45 @@ class InquiryModeratorSerializerService:
         return True, None, None
     
     @staticmethod
-    def create_message_for_inquiry(request, pk):
+    def create_message_for_inquiry(request, pk) -> InquiryModeratorMessage:
+        """
+        Create a message for an inquiry.
+
+        Args:
+            - request: Request object
+            - pk: Inquiry ID
+        
+        Returns:
+            - InquiryModeratorMessage object
+
+        Raises:
+            - NotFoundError: If the inquiry is not found
+            - ValidationError: If the serializer is not valid
+        """
         inquiry_moderator = InquiryModerator.objects.filter(
             inquiry__id=pk, 
             inquiry__solved=False
         ).filter(moderator=request.user).first()
 
         if not inquiry_moderator:
-            return None, {'error': 'Inquiry not found'}, HTTP_404_NOT_FOUND
+            raise NotFoundError()
+            # return None, {'error': 'Inquiry not found'}, HTTP_404_NOT_FOUND
         
         message_serializer = InquiryModeratorMessageCreateSerializer(data=request.data)
         message_serializer.is_valid(raise_exception=True)
         message = message_serializer.save(inquiry_moderator=inquiry_moderator)
 
-        return message, None, None
+        return message
 
 
 class InquirySerializerService:
     @staticmethod
     def serialize_inquiry(inquiry: Inquiry) -> InquirySerializer:
-        return serialize_inquiry(inquiry)
+        return _serialize_inquiry(inquiry)
     
     @staticmethod
     def serialize_inquiries(inquiries: List[Inquiry]) -> InquirySerializer:
-        return serialize_inquiries_for_list(inquiries)
+        return _serialize_inquiries_for_list(inquiries)
 
     @staticmethod
     def serialize_inquiry_types(types : BaseManager[InquiryType]) -> InquiryTypeSerializer:
@@ -604,7 +640,7 @@ class InquirySerializerService:
                 },
                 'language': {
                     'fields': ['name']
-                }
+                },
             }
         )
     
@@ -612,7 +648,7 @@ class InquirySerializerService:
     def serialize_inquiries_for_specific_moderator(
         inquiries: List[Inquiry],
     ) -> InquirySerializer:
-        return serialize_inquiries_for_specific_moderator(inquiries)
+        return _serialize_inquiries_for_specific_moderator(inquiries)
     
     @staticmethod
     def serialize_inquiry_messages(messages: list) -> InquiryCommonMessageSerializer:

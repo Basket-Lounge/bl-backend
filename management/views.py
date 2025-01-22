@@ -48,7 +48,7 @@ from teams.services import PostSerializerService, PostService, TeamSerializerSer
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
 from users.models import Role, User
 from users.serializers import RoleSerializer
-from users.services import PostCommentSerializerService, UserChatSerializerService
+from users.services.serializers_services import PostCommentSerializerService, UserChatSerializerService
 from users.utils import generate_websocket_subscription_token
 
 
@@ -225,9 +225,10 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
 
     @get_inquiry_messages.mapping.post 
     def send_message(self, request, pk=None):
-        message, error, status = InquiryModeratorSerializerService.create_message_for_inquiry(request, pk)
-        if not message:
-            return Response(status=status, data=error)
+        try:
+            message = InquiryModeratorSerializerService.create_message_for_inquiry(request, pk)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         broadcast_inquiry_updates_for_new_message_to_all_parties.delay(pk, message.id)
         return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
@@ -238,7 +239,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path=r'mark-as-read',
     )
     def mark_inquiry_as_read(self, request, pk=None):
-        inquiry = InquiryService.check_inquiry_exists(pk)
+        inquiry = InquiryModeratorService.check_inquiry_moderator_exists(pk, request.user)
         if not inquiry:
             return Response(status=HTTP_404_NOT_FOUND)
 
@@ -381,7 +382,7 @@ class ReportAdminViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     def partial_update(self, request, pk=None):
-        updated, error, status = ReportService.update_report(request, pk)
+        updated, error, status = ReportSerializerService.update_report(request, pk)
         if error:
             return Response(status=status, data=error)
 
@@ -421,7 +422,7 @@ class ReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def create(self, request):
-        created, error, status = ReportService.create_report(request)
+        created, error, status = ReportSerializerService.create_report(request)
         if error:
             return Response(status=status, data=error)
 
@@ -452,7 +453,7 @@ class PostManagementViewSet(viewsets.ViewSet):
         return pagination.get_paginated_response(serializer.data)
 
     def partial_update(self, request, pk=None): 
-        updated, error, status = PostManagementService.update_post(request, pk)
+        updated, error, status = PostManagementSerializerService.update_post(request, pk)
         if not updated:
             return Response(status=status, data=error)
 
@@ -484,7 +485,7 @@ class UserManagementViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     def partial_update(self, request, pk=None):
-        updated, error, status = UserManagementService.update_user(request, pk)
+        updated, error, status = UserManagementSerializerService.update_user(request, pk)
         if not updated:
             return Response(status=status, data=error)
 

@@ -12,7 +12,7 @@ from management.models import (
     ReportType, 
     ReportTypeDisplayName
 )
-from teams.serializers import LanguageSerializer
+from teams.serializers import LanguageSerializer, TeamSerializer
 from users.models import Role
 from users.serializers import UserSerializer
 
@@ -52,6 +52,10 @@ class InquiryUpdateSerializer(serializers.Serializer):
     solved = serializers.BooleanField()
 
     def update(self, instance, validated_data):
+        old_title = instance.title
+        old_inquiry_type = instance.inquiry_type
+        old_solved = instance.solved
+
         title = validated_data.get('title', None)
         inquiry_type = validated_data.get('inquiry_type', None)
         solved = validated_data.get('solved', None)
@@ -66,7 +70,9 @@ class InquiryUpdateSerializer(serializers.Serializer):
         if isinstance(solved, bool):
             instance.solved = solved
 
-        instance.save()
+        if old_title != instance.title or old_inquiry_type != instance.inquiry_type or old_solved != instance.solved:
+            instance.save()
+
         return instance
 
 
@@ -251,8 +257,10 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
         if not hasattr(obj, 'last_message'):
             return None
         
+        if obj.last_message is None:
+            return None
+        
         last_message = {}
-
         last_message['message'] = obj.last_message
         if hasattr(obj, 'last_message_created_at') and obj.last_message_created_at:
             last_message['created_at'] = obj.last_message_created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
@@ -264,14 +272,14 @@ class InquiryModeratorSerializer(DynamicFieldsSerializerMixin, serializers.Model
     def get_unread_messages_count(self, obj):
         if not hasattr(obj, 'unread_messages_count'):
             return None
-        return obj.unread_messages_count
+
+        return obj.unread_messages_count if obj.unread_messages_count is not None else 0
     
     def get_unread_other_moderators_messages_count(self, obj):
         if not hasattr(obj, 'unread_other_moderators_messages_count'):
             return None
         
-        return obj.unread_other_moderators_messages_count
-
+        return obj.unread_other_moderators_messages_count if obj.unread_other_moderators_messages_count is not None else 0
 
 
 class InquiryMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -359,9 +367,10 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         if not hasattr(obj, 'last_message'):
             return None
         
-        last_message = {}
+        if obj.last_message is None:
+            return None
         
-        last_message['message'] = obj.last_message
+        last_message = {'message': obj.last_message, 'created_at': None}
         if hasattr(obj, 'last_message_created_at') and obj.last_message_created_at:
             last_message['created_at'] = obj.last_message_created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         else:
@@ -373,7 +382,7 @@ class InquirySerializer(DynamicFieldsSerializerMixin, serializers.ModelSerialize
         if not hasattr(obj, 'unread_messages_count'):
             return None
         
-        return obj.unread_messages_count
+        return obj.unread_messages_count if obj.unread_messages_count is not None else 0
     
 class InquiryCommonMessageSerializer(serializers.Serializer):
     id = serializers.UUIDField()
@@ -383,6 +392,37 @@ class InquiryCommonMessageSerializer(serializers.Serializer):
     user_type = serializers.CharField()
     user_id = serializers.IntegerField()
     user_username = serializers.CharField()
+    user_favorite_team = serializers.SerializerMethodField()
+
+    def get_user_favorite_team(self, obj):
+        teams_set = None
+        if not hasattr(obj, 'inquiry') and not hasattr(obj, 'inquiry_moderator'):
+            return None
+        
+        if hasattr(obj, 'inquiry'):
+            if not hasattr(obj.inquiry, 'user') or not hasattr(obj.inquiry.user, 'teamlike_set'):
+                return None
+            
+            teams_set = obj.inquiry.user.teamlike_set.all()
+
+        elif hasattr(obj, 'inquiry_moderator'):
+            if not hasattr(obj.inquiry_moderator, 'moderator') or not hasattr(obj.inquiry_moderator.moderator, 'teamlike_set'):
+                return None
+
+            teams_set = obj.inquiry_moderator.moderator.teamlike_set.all()
+
+        if not teams_set:
+            return None
+        
+        for teamlike in teams_set:
+            if teamlike.favorite:
+                serializer = TeamSerializer(
+                    teamlike.team,
+                    fields_exclude=['teamname_set', 'likes_count', 'liked'],
+                )
+                return serializer.data
+            
+        return None
     
 
 class ReportTypeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
