@@ -1,6 +1,8 @@
 import uuid
 from django.db import models
 
+from django_cte import CTEManager
+
 # Create your models here.
 class ReportType(models.Model):
     id = models.SmallAutoField(primary_key=True)
@@ -67,6 +69,7 @@ class InquiryTypeDisplayName(models.Model):
         return self.display_name
     
 class Inquiry(models.Model):
+    objects = CTEManager()
     id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
@@ -82,6 +85,11 @@ class Inquiry(models.Model):
     title = models.CharField(max_length=512)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['-updated_at']),
+        ]
 
     def __str__(self):
         return f'{self.user} inquired about {self.inquiry_type}'
@@ -101,6 +109,15 @@ class InquiryModerator(models.Model):
     assigned_at = models.DateTimeField(auto_now_add=True)
     in_charge = models.BooleanField(default=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['inquiry', 'moderator'], name='unique_inquiry_moderator'),
+        ]
+        indexes = [
+            models.Index(fields=['inquiry', 'moderator']),
+            models.Index(fields=['last_read_at']),
+        ]
+
     def __str__(self):
         return f'{self.moderator} assigned to {self.inquiry}'
     
@@ -115,10 +132,17 @@ class InquiryModeratorMessage(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['inquiry_moderator', '-created_at']),
+            models.Index(fields=['created_at']),
+        ]
+
     def __str__(self):
         return f'{self.inquiry_moderator.moderator.username} in {self.inquiry_moderator.inquiry.id}'
 
 class InquiryMessage(models.Model):
+    objects = CTEManager()
     id = models.UUIDField(
         primary_key=True, 
         default=uuid.uuid4, 
@@ -132,6 +156,11 @@ class InquiryMessage(models.Model):
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['inquiry', '-created_at'])
+        ]
 
     def __str__(self):
         return f'{self.user} in {self.inquiry}'

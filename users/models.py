@@ -178,7 +178,7 @@ class UserChatParticipant(models.Model):
     )
     last_read_at = models.DateTimeField(
         auto_now=True, 
-        help_text="Last time the other user read the chat"
+        help_text="Last time the user read the chat" 
     )
     chat_blocked = models.BooleanField(
         default=False, 
@@ -205,6 +205,11 @@ class UserChatParticipantMessage(models.Model):
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['sender', '-created_at'])
+        ]
 
     def __str__(self):
         return f'{self.id}'
