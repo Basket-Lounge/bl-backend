@@ -588,7 +588,6 @@ class UserChatParticipantMessageCreateSerializer(serializers.Serializer):
 class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     chat_data = serializers.SerializerMethodField()
     user_data = serializers.SerializerMethodField()
-    messages = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     unread_messages_count = serializers.SerializerMethodField()
 
@@ -620,67 +619,33 @@ class UserChatParticipantSerializer(DynamicFieldsSerializerMixin, serializers.Mo
         )
         return serializer.data
 
-    def get_messages(self, obj):
-        if not hasattr(obj, 'userchatparticipantmessage_set'):
-            return None
-        
-        context = self.context.get('userchatparticipantmessage', {})
-        extra_context = self.context.get('userchatparticipantmessage_extra', {})
-
-        ## get the last 50 messages
-        messages = obj.userchatparticipantmessage_set.all()[:50]
-
-        user = extra_context.get('user_last_deleted_at', None)
-        if user:
-            last_deleted_at = user.get('last_deleted_at', None)
-            if last_deleted_at:
-                messages = [message for message in messages if message.created_at > last_deleted_at]
-
-        serializer = UserChatParticipantMessageSerializer(
-            messages,
-            many=True,
-            context=self.context,
-            **context    
-        )
-        return serializer.data
-
     def get_last_message(self, obj):
-        if not hasattr(obj, 'userchatparticipantmessage_set'):
+        if not hasattr(obj, 'last_message'):
             return None
         
-        context = self.context.get('userchatparticipantmessage', {})
-        last_message = obj.userchatparticipantmessage_set.all().first()
-
-        if not last_message:
+        if obj.last_message is None:
             return None
         
-        extra_context = self.context.get('userchatparticipantmessage_extra', {})
-        user = extra_context.get('user_last_deleted_at', None)
-        if user:
-            last_deleted_at = user.get('last_deleted_at', None)
-            if last_deleted_at:
-                if last_message.created_at < last_deleted_at:
+        if 'userchatparticipantmessage_extra' in self.context:
+            user_last_deleted_at = self.context['userchatparticipantmessage_extra'].get('user_last_deleted_at', {})
+            if str(obj.chat.id) in user_last_deleted_at:
+                last_deleted_at = user_last_deleted_at[str(obj.chat.id)].get('last_deleted_at', None)
+                if last_deleted_at and (obj.last_message_created_at < last_deleted_at):
                     return None
-
-        serializer = UserChatParticipantMessageSerializer(
-            last_message,
-            context=self.context,
-            **context    
-        )
-        return serializer.data
+        
+        last_message = {'message': obj.last_message, 'created_at': None}
+        if hasattr(obj, 'last_message_created_at') and obj.last_message_created_at:
+            last_message['created_at'] = obj.last_message_created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+        else:
+            last_message['created_at'] = None
+        
+        return last_message
     
     def get_unread_messages_count(self, obj):
-        if not hasattr(obj, 'userchatparticipantmessage_set'):
+        if not hasattr(obj, 'unread_messages_count'):
             return None
-
-        last_read_at = obj.last_read_at
-
-        count = 0
-        for message in obj.userchatparticipantmessage_set.all():
-            if message.created_at > last_read_at:
-                count += 1
-
-        return count
+        
+        return obj.unread_messages_count if obj.unread_messages_count is not None else 0
     
 
 class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -700,7 +665,7 @@ class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
         # get the last deleted at for the user
         if context.get('fields', []) and 'last_message' in context.get('fields', []):
             extra_context = self.context.get('userchatparticipantmessage_extra', {})
-            if extra_context and 'user_id' in extra_context:
+            if 'user_id' in extra_context and hasattr(obj, 'id'):
                 user_id = extra_context['user_id']
                 user_participant = None
                 for participant in participants:
@@ -708,12 +673,31 @@ class UserChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializ
                         user_participant = participant
                         break
 
-                self.context['userchatparticipantmessage_extra'] = {
-                    'user_last_deleted_at': {
-                        'id': extra_context['user_id'],
-                        'last_deleted_at': user_participant.last_deleted_at
-                    }
-                }
+                if user_participant:
+                    last_at = None
+                    if user_participant.last_deleted_at and user_participant.last_blocked_at:
+                        if user_participant.last_deleted_at > user_participant.last_blocked_at:
+                            last_at = user_participant.last_deleted_at
+                        else:
+                            last_at = user_participant.last_blocked_at
+                    elif user_participant.last_deleted_at:
+                        last_at = user_participant.last_deleted_at
+                    elif user_participant.last_blocked_at:
+                        last_at = user_participant.last_blocked_at
+
+                    if last_at:
+                        if 'user_last_deleted_at' not in self.context:
+                            self.context['userchatparticipantmessage_extra']['user_last_deleted_at'] = {}
+                            self.context['userchatparticipantmessage_extra']['user_last_deleted_at'][str(obj.id)] = {
+                                'last_deleted_at': last_at
+                            }
+                        else:
+                            if str(obj.id) not in self.context['userchatparticipantmessage_extra']['user_last_deleted_at']:
+                                self.context['userchatparticipantmessage_extra']['user_last_deleted_at'][str(obj.id)] = {
+                                    'last_deleted_at': user_participant.last_at
+                                }
+                            else:
+                                self.context['userchatparticipantmessage_extra']['user_last_deleted_at'][str(obj.id)]['last_deleted_at'] = last_at
 
         serializer = UserChatParticipantSerializer(
             participants,

@@ -48,7 +48,7 @@ from users.serializers import (
     PostSerializer, 
     PostUpdateSerializer
 )
-from users.services import create_post_queryset_without_prefetch_for_user
+from users.services.models_services import create_post_queryset_without_prefetch_for_user
 
 
 comment_queryset_allowed_order_by_fields = [
