@@ -144,6 +144,9 @@ class NotificationSerializerTestCase(APITestCase):
                 'notificationrecipient': {
                     'fields': ['read', 'read_at', 'recipient_data']
                 },
+                'notificationtemplatetypedisplayname': {
+                    'fields_exclude': ['type_data']
+                },
                 'user': {
                     'fields': ['id', 'username']
                 },
@@ -193,6 +196,12 @@ class NotificationSerializerTestCase(APITestCase):
         self.assertTrue('contents' in notification_item)
         self.assertTrue('recipients' in notification_item)
 
+        self.assertTrue('id' in notification_item['template_data'])
+        self.assertTrue('picture_url_template' in notification_item['template_data'])
+        self.assertTrue('redirect_url_template' in notification_item['template_data'])
+        self.assertTrue('subject' in notification_item['template_data'])
+        self.assertTrue('type_data' in notification_item['template_data'])
+        self.assertTrue('bodies' in notification_item['template_data'])
         self.assertEqual(notification_item['template_data']['id'], str(notification.template.id))
         self.assertEqual(len(notification_item['actors']), 1)
         self.assertEqual(notification_item['actors'][0]['user_data']['username'], 'testuser2')

@@ -36,10 +36,10 @@ class NotificationTemplateTypeSerializer(DynamicFieldsSerializerMixin, serialize
         Get display names for the notification template type in different languages
 
         Args:
-            obj (NotificationTemplateType): The notification template type object
+            - obj (NotificationTemplateType): The notification template type object
 
         Returns:
-            dict: A dictionary of display names in different languages
+            - dict: A dictionary of display names in different languages
 
         Raises:
             serializers.ValidationError: If the language data is not found in the notification template type display name
@@ -55,6 +55,13 @@ class NotificationTemplateTypeSerializer(DynamicFieldsSerializerMixin, serialize
         if 'fields' in context:
             if 'type_data' in context['fields']:
                 raise serializers.ValidationError('Cannot include type_data in notification template type display name')
+        
+        if 'fields_exclude' in context:
+            if not 'type_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude type_data in notification template type display name')
+            
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification template type display name. This will cause a recursive loop due to type_data')
 
         serializer = NotificationTemplateTypeDisplayNameSerializer(
             obj.notificationtemplatetypedisplayname_set.all(),
@@ -156,6 +163,18 @@ class NotificationTemplateSerializer(DynamicFieldsSerializerMixin, serializers.M
             return None
         
         context = self.context.get('notificationtemplatebody', {})
+
+        if 'fields' in context:
+            if 'template_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include template_data in notification template body')
+
+        if 'fields_exclude' in context:
+            if not 'template_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude template_data in notification template body')
+        
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification template body. This will cause a recursive loop due to template_data')
+
         serializer = NotificationTemplateBodySerializer(
             obj.notificationtemplatebody_set.all(),
             many=True,
@@ -269,6 +288,18 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
             return None
         
         context = self.context.get('notificationactor', {})
+
+        if 'fields' in context:
+            if 'notification_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include notification_data in notification actor')
+        
+        if 'fields_exclude' in context:
+            if not 'notification_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude notification_data in notification actor')
+            
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification actor. This will cause a recursive loop due to notification_data')
+
         serializer = NotificationActorSerializer(
             obj.notificationactor_set.all(),
             many=True,
@@ -375,6 +406,18 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
             return None
         
         context = self.context.get('notificationtemplatebody', {})
+
+        if 'fields' in context:
+            if 'template_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include template_data in notification template body')
+        
+        if 'fields_exclude' in context:
+            if not 'template_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude template_data in notification template body')
+        
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification template body. This will cause a recursive loop due to template_data')
+
         serializer = NotificationTemplateBodySerializer(
             obj.template.notificationtemplatebody_set.all(),
             many=True,
