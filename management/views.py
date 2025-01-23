@@ -36,6 +36,8 @@ from management.services.serializers_services import (
 )
 
 from management.tasks import (
+    broadcast_inquiry_moderator_assignment_to_all_parties,
+    broadcast_inquiry_moderator_unassignment_to_all_parties,
     broadcast_inquiry_updates_for_new_message_to_all_parties, 
     broadcast_inquiry_updates_to_all_parties
 )
@@ -332,7 +334,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         InquiryModeratorService.assign_moderator(request, inquiry)
-        send_new_moderator_to_live_chat(inquiry, request.user.id)
+        broadcast_inquiry_moderator_assignment_to_all_parties.delay(pk, request.user.id)
         return Response(status=HTTP_201_CREATED)
     
     @assign_moderator.mapping.delete
@@ -342,7 +344,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         InquiryModeratorService.unassign_moderator(request, inquiry)
-        send_unassigned_inquiry_to_live_chat(inquiry, request.user.id)
+        broadcast_inquiry_moderator_unassignment_to_all_parties.delay(pk, request.user.id)
         return Response(status=HTTP_200_OK)
 
 

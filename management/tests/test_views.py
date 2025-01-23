@@ -1,7 +1,6 @@
 from unittest.mock import patch
 from rest_framework.test import APITestCase, APIRequestFactory, force_authenticate
 
-from api.utils import MockResponse
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
 from management.views import InquiryModeratorViewSet
 from users.models import Role, User
@@ -250,7 +249,7 @@ class InquiryModeratorViewSetTestCase(APITestCase):
         self.assertEqual(len(index_set), 5)
 
     
-    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    @patch('management.tasks.broadcast_inquiry_updates_to_all_parties.delay')
     def test_partial_update(self, mocked):
         # Create an inquiry
         inquiry_type = InquiryType.objects.all().first()
