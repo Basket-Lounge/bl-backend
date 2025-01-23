@@ -980,7 +980,7 @@ class UserAPIEndpointTestCase(APITestCase):
         message = data['results'][0]
         self.assertEqual(message['message'], 'test message 0')
 
-    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    @patch('users.tasks.broadcast_chat_updates_for_new_message_to_all_parties.delay')
     def test_post_chat_message(self, mocked):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -1633,7 +1633,8 @@ class UserAPIEndpointTestCase(APITestCase):
             current_datetime = data['results'][i]['created_at']
             self.assertTrue(datetime.strptime(last_datetime, '%Y-%m-%dT%H:%M:%S.%fZ') < datetime.strptime(current_datetime, '%Y-%m-%dT%H:%M:%S.%fZ'))
 
-    def test_mark_inquiry_messages_as_read(self):
+    @patch('users.tasks.broadcast_inquiry_updates_to_all_parties.delay')
+    def test_mark_inquiry_messages_as_read(self, mocked):
         user = User.objects.filter(username='testuser').first()
         if not user:
             self.fail("User not found")
@@ -1691,7 +1692,7 @@ class UserAPIEndpointTestCase(APITestCase):
         response = view(request, inquiry_id=random_uuid)
         self.assertEqual(response.status_code, 404)
     
-    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    @patch('users.tasks.broadcast_inquiry_updates_for_new_message_to_all_parties.delay')
     def test_post_inquiry_message(self, mocked):
         user = User.objects.filter(username='testuser').first()
         if not user:

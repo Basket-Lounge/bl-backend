@@ -16,7 +16,11 @@ from rest_framework.status import (
 )
 
 from api.exceptions import CustomError
-from api.paginators import ChatMessageCursorPagination, CustomPageNumberPagination, InquiryMessageCursorPagination
+from api.paginators import (
+    ChatMessageCursorPagination, 
+    CustomPageNumberPagination, 
+    InquiryMessageCursorPagination
+)
 
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
@@ -52,7 +56,11 @@ from users.services.serializers_services import (
     UserSerializerService, 
 )
 
-from users.tasks import broadcast_chat_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_to_all_parties
+from users.tasks import (
+    broadcast_chat_updates_for_new_message_to_all_parties, 
+    broadcast_inquiry_updates_for_new_message_to_all_parties, 
+    broadcast_inquiry_updates_to_all_parties
+)
 from users.utils import (
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
