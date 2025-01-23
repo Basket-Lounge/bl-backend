@@ -28,7 +28,13 @@ def broadcast_inquiry_updates_for_new_message_to_all_parties(inquiry_id, message
         )
 
 @shared_task
-def broadcast_inquiry_updates_to_all_parties(inquiry_id):
+def broadcast_inquiry_updates_to_all_parties(inquiry_id: str):
+    """
+    Broadcast inquiry updates to all parties via WebSockets.
+
+    Args:
+        - inquiry_id (str): The ID of the inquiry to broadcast updates for.
+    """
     inquiry = filter_and_fetch_inquiry(id=inquiry_id)
 
     send_partially_updated_inquiry_to_live_chat(inquiry)

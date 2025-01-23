@@ -29,11 +29,7 @@ from management.services.serializers_services import (
     UserManagementSerializerService,
     InquirySerializerService,
     ReportSerializerService,
-    send_inquiry_notification_to_all_channels_for_moderators,
-    send_inquiry_notification_to_specific_moderator,
-    send_inquiry_notification_to_user,
     send_new_moderator_to_live_chat,
-    send_partially_updated_inquiry_to_live_chat,
     send_unassigned_inquiry_to_live_chat,
     serialize_report,
     serialize_reports
@@ -187,18 +183,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         if error:
             return Response(status=status, data=error)
 
-        inquiry = InquiryService.get_inquiry_by_id(pk) 
-
-        send_partially_updated_inquiry_to_live_chat(inquiry)
-        send_inquiry_notification_to_user(inquiry)
-        send_inquiry_notification_to_all_channels_for_moderators(inquiry)
-
-        for moderator in inquiry.inquirymoderator_set.all():
-            send_inquiry_notification_to_specific_moderator(
-                inquiry,
-                moderator.moderator.id,
-            )
-
+        broadcast_inquiry_updates_to_all_parties.delay(pk)
         return Response(status=HTTP_200_OK)
     
     @action(

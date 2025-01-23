@@ -1099,7 +1099,7 @@ class InquiryService:
             last_message=Subquery(latest_message_subquery, output_field=CharField()),
             last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
             unread_messages_count=unread_messages_count_subquery
-        )
+        ).order_by('-updated_at')
     
     @staticmethod
     def get_inquiry_with_request(request: Request, inquiry_id: str):
@@ -1272,10 +1272,6 @@ class InquiryService:
         if datetime_str is not None:
             datetime_obj = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
             messages_qs = messages_qs.filter(created_at__lt=datetime_obj)
-        else:
-            messages_qs = messages_qs.filter(
-                created_at__lt=datetime.now(timezone.utc)
-            )
 
         moderator_messages_qs = InquiryModeratorMessage.objects.filter(
             inquiry_moderator__inquiry__id=inquiry_id,
@@ -1300,10 +1296,6 @@ class InquiryService:
         if datetime_str is not None:
             datetime_obj = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
             moderator_messages_qs = moderator_messages_qs.filter(created_at__lt=datetime_obj)
-        else:
-            moderator_messages_qs = moderator_messages_qs.filter(
-                created_at__lt=datetime.now(timezone.utc)
-            )
 
         return messages_qs, moderator_messages_qs
 

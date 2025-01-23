@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 from api.exceptions import BadRequestError
-from api.websocket import send_message_to_centrifuge
+from api.websocket import broadcast_message_to_centrifuge, send_message_to_centrifuge
 from management.models import (
-    Inquiry, 
     InquiryMessage, 
 )
 from management.serializers import (
@@ -25,25 +24,32 @@ from users.serializers import (
 
 from rest_framework.request import Request
 
+from users.services.models_services import UserChatService
 
-def send_update_to_all_parties_regarding_chat(
-    sender_user_id: int,
-    recipient_user_id: int,
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def send_update_to_all_parties_regarding_chat_message(
     chat_id: str,
-    chat_serializer,
-    message_serializer
-):
-    sender_chat_notification_channel_name = f'users/{sender_user_id}/chats/updates'
-    send_message_to_centrifuge(
-        sender_chat_notification_channel_name,
-        chat_serializer.data
-    )
+    message_id: str
+) -> None:
+    """
+    Send an update to all parties regarding a chat message.
 
-    recipient_chat_notification_channel_name = f'users/{recipient_user_id}/chats/updates'
-    send_message_to_centrifuge(
-        recipient_chat_notification_channel_name,
-        chat_serializer.data
-    ) 
+    Args:
+        - chat_id (str): The ID of the chat to send updates for.
+        - message_id (str): The ID of the message to send updates for.
+
+    Returns:
+        - None
+    """
+    message = UserChatService.get_chat_message(message_id)
+    if not message:
+        return
+
+    message_serializer = UserChatSerializerService.serialize_message_for_chat(message)
 
     chat_channel_name = f'users/chats/{chat_id}'
     send_message_to_centrifuge(
@@ -51,55 +57,46 @@ def send_update_to_all_parties_regarding_chat(
         message_serializer.data
     )
 
+def send_partially_updated_chat_to_live_chat(
+    chat_id: str,
+    sender_user_id: int,
+    recipient_user_id: int,
+) -> None:
+    """
+    Send a partially updated chat to the live chat. Note that this function does not send the entire chat log.
 
-def send_update_to_all_parties_regarding_inquiry(
-    inquiry: Inquiry,
-    user: User,
-    message_serializer,
-    inquiry_update_serializer: InquirySerializer
-):
-    inquiry_channel_name = f'users/inquiries/{inquiry.id}'
-    send_message_to_centrifuge(
-        inquiry_channel_name,
-        message_serializer.data
+    Args:
+        - chat_id (str): The ID of the chat to send updates for.
+        - sender_user_id (int): The ID of the user that sent the message.
+        - recipient_user_id (int): The ID of the user that received the message.
+    
+    Returns:
+        - None
+    """
+    chat = UserChatService.get_chat_by_id(chat_id)
+    if not chat:
+        return
+
+    chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
+
+    channel_names = [
+        f'users/{sender_user_id}/chats/updates',
+        f'users/{recipient_user_id}/chats/updates',
+    ]
+
+    resp_json = broadcast_message_to_centrifuge(
+        channel_names,
+        chat_serializer.data,
     )
 
-    user_inquiry_notification_channel_name = f'users/{user.id}/inquiries/updates'
-    send_message_to_centrifuge(
-        user_inquiry_notification_channel_name,
-        inquiry_update_serializer.data
+    if not resp_json:
+        logger.error('Failed to broadcast chat updates to all parties')
+
+    resp_json = send_message_to_centrifuge(
+        f'users/chats/{chat_id}',
+        chat_serializer.data,
+        type='chat_update'
     )
-
-    ## TODO: Fix this to reflect the changes in both the queryset and the serializer 
-    for moderator in inquiry.inquirymoderator_set.all():
-        moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
-
-        inquiry_for_moderators_serializer = InquirySerializer(
-            inquiry,
-            fields_exclude=['user_data', 'unread_messages_count'],
-            context={
-                'user': {
-                    'fields': ['id', 'username']
-                },
-                'inquirytypedisplayname': {
-                    'fields': ['display_name', 'language_data']
-                },
-                'inquirymoderator': {
-                    'fields': ['moderator_data', 'last_message']
-                },
-                'moderator': {
-                    'fields': ['id', 'username']
-                },
-                'language': {
-                    'fields': ['name']
-                }
-            }
-        )
-
-        send_message_to_centrifuge(
-            moderator_inquiry_notification_channel_name,
-            inquiry_for_moderators_serializer.data
-        )
 
 class UserSerializerService:
     @staticmethod

@@ -50,7 +50,6 @@ from users.services.serializers_services import (
     PostCommentSerializerService, 
     UserChatSerializerService, 
     UserSerializerService, 
-    send_update_to_all_parties_regarding_chat, 
 )
 
 from users.tasks import broadcast_chat_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_for_new_message_to_all_parties, broadcast_inquiry_updates_to_all_parties

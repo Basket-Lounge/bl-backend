@@ -1,10 +1,17 @@
 from celery import shared_task
 
-from api.websocket import broadcast_message_to_centrifuge, send_message_to_centrifuge
 from management.services.models_services import InquiryService, filter_and_fetch_inquiry
-from management.services.serializers_services import send_inquiry_message_to_live_chat, send_inquiry_notification_to_all_channels_for_moderators, send_inquiry_notification_to_specific_moderator, send_inquiry_notification_to_user, send_partially_updated_inquiry_to_live_chat
-from users.services.models_services import UserChatService
-from users.services.serializers_services import UserChatSerializerService
+from management.services.serializers_services import (
+    send_inquiry_message_to_live_chat, 
+    send_inquiry_notification_to_all_channels_for_moderators, 
+    send_inquiry_notification_to_specific_moderator, 
+    send_inquiry_notification_to_user, 
+    send_partially_updated_inquiry_to_live_chat
+)
+from users.services.serializers_services import (
+    send_partially_updated_chat_to_live_chat, 
+    send_update_to_all_parties_regarding_chat_message
+)
 
 import logging
 
@@ -51,32 +58,5 @@ def broadcast_chat_updates_for_new_message_to_all_parties(
     sender_user_id: int,
     recipient_user_id: int,
 ):
-    message = UserChatService.get_chat_message(message_id)
-    if not message:
-        return
-
-    message_serializer = UserChatSerializerService.serialize_message_for_chat(message)
-
-    chat = UserChatService.get_chat_by_id(chat_id)
-    if not chat:
-        return
-
-    chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
-    
-    channel_names = [
-        f'users/{sender_user_id}/chats/updates',
-        f'users/{recipient_user_id}/chats/updates',
-    ]
-
-    resp_json = broadcast_message_to_centrifuge(
-        channel_names,
-        chat_serializer.data
-    )
-    if not resp_json:
-        return
-
-    chat_channel_name = f'users/chats/{chat_id}'
-    send_message_to_centrifuge(
-        chat_channel_name, 
-        message_serializer.data
-    )
+    send_partially_updated_chat_to_live_chat(chat_id, sender_user_id, recipient_user_id)
+    send_update_to_all_parties_regarding_chat_message(chat_id, message_id)
