@@ -8,7 +8,8 @@ from notification.models import (
     NotificationRecipient, 
     NotificationTemplate, 
     NotificationTemplateBody, 
-    NotificationTemplateType
+    NotificationTemplateType,
+    NotificationTemplateTypeDisplayName
 )
 from players.serializers import PlayerSerializer
 from teams.serializers import LanguageSerializer, TeamSerializer
@@ -24,10 +25,118 @@ from django.conf import settings
 
 
 class NotificationTemplateTypeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    display_names = serializers.SerializerMethodField()
+
     class Meta:
         model = NotificationTemplateType
         fields = '__all__'
 
+    def get_display_names(self, obj):
+        '''
+        Get display names for the notification template type in different languages
+
+        Args:
+            - obj (NotificationTemplateType): The notification template type object
+
+        Returns:
+            - dict: A dictionary of display names in different languages
+
+        Raises:
+            serializers.ValidationError: If the language data is not found in the notification template type display name
+            serializers.ValidationError: If the language name is not found in the notification template type display name
+            serializers.ValidationError: If the display name is not found in the notification template type display name
+            serializers.ValidationError: If the type data is included in the notification template type display name
+        '''
+        if not hasattr(obj, 'notificationtemplatetypedisplayname_set'):
+            return None
+        
+        context = self.context.get('notificationtemplatetypedisplayname', {})
+
+        if 'fields' in context:
+            if 'type_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include type_data in notification template type display name')
+        
+        if 'fields_exclude' in context:
+            if not 'type_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude type_data in notification template type display name')
+            
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification template type display name. This will cause a recursive loop due to type_data')
+
+        serializer = NotificationTemplateTypeDisplayNameSerializer(
+            obj.notificationtemplatetypedisplayname_set.all(),
+            many=True,
+            context=self.context,
+            **context
+        )
+
+        data = serializer.data
+
+        display_names = {}
+        for item in data:
+            if 'language_data' not in item:
+                raise serializers.ValidationError('Language data not found in notification template type display name')
+            
+            if 'name' not in item['language_data']:
+                raise serializers.ValidationError('Language name not found in notification template type display name')
+            
+            if 'name' not in item:
+                raise serializers.ValidationError('Display name not found in notification template type display name')
+
+            key = item['language_data']['name']
+            display_names[key] = item['name']
+        
+        return display_names
+
+
+class NotificationTemplateTypeDisplayNameSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    type_data = serializers.SerializerMethodField()
+    language_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NotificationTemplateTypeDisplayName
+        exclude = ['type', 'language']
+
+    def get_type_data(self, obj):
+        '''
+        Get the type data for the notification template type display name
+
+        Args:
+            obj (NotificationTemplateTypeDisplayName): The notification template type display name object
+
+        Returns:
+            dict: The type data for the notification template type display name
+
+        Raises:
+            serializers.ValidationError: If the type data is included in the notification template type display name
+        '''
+
+        if not hasattr(obj, 'type'):
+            return None
+
+        context = self.context.get('notificationtemplatetype', {})
+        if 'fields' in context:
+            if 'display_names' in context['fields']:
+                raise serializers.ValidationError('Cannot include display_names in notification template type data')
+
+        serializer = NotificationTemplateTypeSerializer(
+            obj.type,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+    def get_language_data(self, obj):
+        if not hasattr(obj, 'language'):
+            return None
+
+        context = self.context.get('language', {})
+        serializer = LanguageSerializer(
+            obj.language,
+            context=self.context,
+            **context
+        )
+        return serializer.data
 
 class NotificationTemplateSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     type_data = serializers.SerializerMethodField()
@@ -54,6 +163,18 @@ class NotificationTemplateSerializer(DynamicFieldsSerializerMixin, serializers.M
             return None
         
         context = self.context.get('notificationtemplatebody', {})
+
+        if 'fields' in context:
+            if 'template_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include template_data in notification template body')
+
+        if 'fields_exclude' in context:
+            if not 'template_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude template_data in notification template body')
+        
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification template body. This will cause a recursive loop due to template_data')
+
         serializer = NotificationTemplateBodySerializer(
             obj.notificationtemplatebody_set.all(),
             many=True,
@@ -167,6 +288,18 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
             return None
         
         context = self.context.get('notificationactor', {})
+
+        if 'fields' in context:
+            if 'notification_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include notification_data in notification actor')
+        
+        if 'fields_exclude' in context:
+            if not 'notification_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude notification_data in notification actor')
+            
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification actor. This will cause a recursive loop due to notification_data')
+
         serializer = NotificationActorSerializer(
             obj.notificationactor_set.all(),
             many=True,
@@ -273,6 +406,18 @@ class NotificationSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeri
             return None
         
         context = self.context.get('notificationtemplatebody', {})
+
+        if 'fields' in context:
+            if 'template_data' in context['fields']:
+                raise serializers.ValidationError('Cannot include template_data in notification template body')
+        
+        if 'fields_exclude' in context:
+            if not 'template_data' in context['fields_exclude']:
+                raise serializers.ValidationError('Cannot exclude template_data in notification template body')
+        
+        if not 'fields' in context and not 'fields_exclude' in context:
+            raise serializers.ValidationError('Fields not found in notification template body. This will cause a recursive loop due to template_data')
+
         serializer = NotificationTemplateBodySerializer(
             obj.template.notificationtemplatebody_set.all(),
             many=True,

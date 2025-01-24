@@ -34,4 +34,10 @@ app.conf.task_queues = (
 
 app.conf.task_routes = {
     'management.tasks.broadcast_inquiry_updates_to_all_parties': {'queue': 'high_priority'},
+    'management.tasks.broadcast_inquiry_updates_for_new_message_to_all_parties': {'queue': 'high_priority'},
+    'management.tasks.broadcast_inquiry_moderator_assignment_to_all_parties': {'queue': 'high_priority'},
+    'management.tasks.broadcast_inquiry_moderator_unassignment_to_all_parties': {'queue': 'high_priority'},
+    'users.tasks.broadcast_inquiry_updates_to_all_parties': {'queue': 'high_priority'},
+    'users.tasks.broadcast_inquiry_updates_for_new_message_to_all_parties': {'queue': 'high_priority'},
+    'users.tasks.broadcast_chat_updates_for_new_message_to_all_parties': {'queue': 'high_priority'},
 }

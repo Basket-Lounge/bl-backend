@@ -16,18 +16,20 @@ from rest_framework.status import (
 )
 
 from api.exceptions import CustomError
-from api.paginators import CustomPageNumberPagination, NotificationHeaderPageNumberPagination
+from api.paginators import (
+    ChatMessageCursorPagination, 
+    CustomPageNumberPagination, 
+    InquiryMessageCursorPagination
+)
+
 from api.websocket import send_message_to_centrifuge
 from games.models import Game
 from management.models import (
     Inquiry, 
 )
-from management.serializers import (
-    InquiryMessageCreateSerializer, 
-    InquiryMessageSerializer, 
-)
 from notification.services.models_services import NotificationService
 from notification.services.serializers_services import NotificationSerializerService
+from notification.utils import get_notification_pagination_class
 from teams.services import PostSerializerService, TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTRefreshAuthentication
 from users.models import Role, User, UserChat
@@ -41,19 +43,24 @@ from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 from dj_rest_auth.registration.views import SocialLoginView
 
-from users.services import (
-    InquirySerializerService, 
+from users.services.models_services import (
     InquiryService,
-    PostCommentSerializerService, 
-    UserChatSerializerService, 
     UserChatService, 
-    UserSerializerService, 
     UserService, 
     UserViewService, 
-    send_update_to_all_parties_regarding_chat, 
-    send_update_to_all_parties_regarding_inquiry
+)
+from users.services.serializers_services import (
+    InquirySerializerService, 
+    PostCommentSerializerService, 
+    UserChatSerializerService, 
+    UserSerializerService, 
 )
 
+from users.tasks import (
+    broadcast_chat_updates_for_new_message_to_all_parties, 
+    broadcast_inquiry_updates_for_new_message_to_all_parties, 
+    broadcast_inquiry_updates_to_all_parties
+)
 from users.utils import (
     generate_websocket_connection_token, 
     generate_websocket_subscription_token
@@ -125,6 +132,8 @@ class UserViewSet(ViewSet):
             permission_classes=[IsAuthenticated]
         elif self.action == 'delete_chat':
             permission_classes=[IsAuthenticated]
+        elif self.action == 'get_chat_messages':
+            permission_classes=[IsAuthenticated]
         elif self.action == 'post_chat_message':
             permission_classes=[IsAuthenticated]
         elif self.action == 'mark_chat_messages_as_read':
@@ -136,6 +145,8 @@ class UserViewSet(ViewSet):
         elif self.action == 'get_inquiry':
             permission_classes=[IsAuthenticated]
         elif self.action == 'mark_inquiry_messages_as_read':
+            permission_classes=[IsAuthenticated]
+        elif self.action == 'get_inquiry_messages':
             permission_classes=[IsAuthenticated]
         elif self.action == 'post_inquiry_message':
             permission_classes=[IsAuthenticated]
@@ -299,10 +310,11 @@ class UserViewSet(ViewSet):
     )
     def get_comments(self, request):
         comments = UserViewService.get_user_comments(request, request.user.id)
+
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(comments, request)
-        serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
 
+        serializer = PostCommentSerializerService.serialize_comments(request, paginated_data)
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -311,12 +323,15 @@ class UserViewSet(ViewSet):
         url_path=r'me/chats',
     )
     def get_chats(self, request):
-        chats = UserChatService.get_my_chats(request)
+        try:
+            chats = UserChatService.get_my_chats_with_request(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(chats, request)
 
         serializer = UserChatSerializerService.serialize_chats(request, paginated_data)
-
         return pagination.get_paginated_response(serializer.data)
     
     @action(
@@ -329,13 +344,11 @@ class UserViewSet(ViewSet):
         if user_id == user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        chat = UserChatService.get_chat(request, user_id)
+        chat = UserChatService.get_user_chat(request.user, user_id)
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        user_participant = chat.userchatparticipant_set.all().get(user=user)
-        serializer = UserChatSerializerService.serialize_chat(chat, user_participant)
-
+        serializer = UserChatSerializerService.serialize_chat(chat)
         return Response(serializer.data)
 
     @get_chat.mapping.delete
@@ -343,35 +356,51 @@ class UserViewSet(ViewSet):
         if user_id == request.user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        UserChatService.delete_chat(request, user_id)
+        UserChatService.delete_chat(request.user, user_id)
         return Response(status=HTTP_200_OK)
-    
+
     @action(
         detail=False,
-        methods=['post'],
+        methods=['get'],
         url_path=r'me/chats/(?P<user_id>[0-9a-f-]+)/messages',
     )
+    def get_chat_messages(self, request, user_id):
+        if user_id == request.user.id:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
+
+        chat_id = UserChatService.check_chat_exists(request.user, user_id)
+        if not chat_id:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        try: 
+            messages = UserChatService.get_chat_messages(chat_id, request.user)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+        
+        pagination = ChatMessageCursorPagination()
+        paginated_data = pagination.paginate_queryset(messages, request)
+
+        serializer = UserChatSerializerService.serialize_messages_for_chat(
+            sorted(paginated_data, key=lambda x: x.created_at)
+        )
+        return pagination.get_paginated_response(serializer.data)
+
+    @get_chat_messages.mapping.post 
     def post_chat_message(self, request, user_id):
         if user_id == request.user.id:
             return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You cannot chat with yourself'})
 
-        message, chat = UserChatService.create_chat_message(request, user_id)
+        message, chat = UserChatSerializerService.create_chat_message(request, user_id)
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
-
-        message_serializer = UserChatSerializerService.serialize_message_for_chat(message)
-
-        chat = UserChatService.get_chat_by_id(chat.id)
-        chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
-
-        send_update_to_all_parties_regarding_chat(
-            request,
-            user_id,
-            chat.id,
-            chat_serializer,
-            message_serializer
-        )
         
+        broadcast_chat_updates_for_new_message_to_all_parties.delay(
+            chat.id, 
+            message.id, 
+            request.user.id, 
+            user_id
+        )
+
         return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
     
     @action(
@@ -388,7 +417,7 @@ class UserViewSet(ViewSet):
         if not chat:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        chat.refresh_from_db()
+        chat = UserChatService.get_chat_by_id(chat.id)
         chat_serializer = UserChatSerializerService.serialize_chat_for_update(chat)
 
         sender_chat_notification_channel_name = f'users/{user.id}/chats/updates'
@@ -478,7 +507,10 @@ class UserViewSet(ViewSet):
         url_path=r'me/inquiries',
     )
     def get_inquiries(self, request):
-        inquiries = InquiryService.get_my_inquiries(request)
+        try:
+            inquiries = InquiryService.get_my_inquiries_with_request(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(inquiries, request)
@@ -493,7 +525,7 @@ class UserViewSet(ViewSet):
         url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)',
     )
     def get_inquiry(self, request, inquiry_id):
-        inquiry = InquiryService.get_inquiry(request, inquiry_id)
+        inquiry = InquiryService.get_inquiry_with_request(request, inquiry_id)
         if not inquiry:
             return Response(status=HTTP_404_NOT_FOUND)
         
@@ -507,6 +539,27 @@ class UserViewSet(ViewSet):
     )
     def mark_inquiry_messages_as_read(self, request, inquiry_id):
         user = request.user
+        inquiry_exists = InquiryService.check_inquiry_exists(
+            id=inquiry_id,
+            user_id=user.id,
+        )
+        if not inquiry_exists:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        InquiryService.mark_inquiry_as_read(inquiry_id)
+        InquiryService.update_updated_at(inquiry_id)
+
+        broadcast_inquiry_updates_to_all_parties.delay(inquiry_id)
+
+        return Response(status=HTTP_200_OK)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/messages',
+    )
+    def get_inquiry_messages(self, request, inquiry_id):
+        user = request.user
         inquiry = Inquiry.objects.filter(
             id=inquiry_id, 
             user=user
@@ -514,57 +567,32 @@ class UserViewSet(ViewSet):
 
         if not inquiry:
             return Response(status=HTTP_404_NOT_FOUND)
+        
+        pagination = InquiryMessageCursorPagination()
+        try:
+            paginated_data = pagination.paginate_querysets(inquiry_id, request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
-        updated = Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
-        if not updated:
-            return Response(status=HTTP_400_BAD_REQUEST)
+        serializer = InquirySerializerService.serialize_inquiry_messages(
+            paginated_data
+        )
+        return pagination.get_paginated_response(serializer.data)
 
-        return Response(status=HTTP_200_OK)
-    
-    @action(
-        detail=False,
-        methods=['post'],
-        url_path=r'me/inquiries/(?P<inquiry_id>[0-9a-f-]+)/messages',
-    )
+    @get_inquiry_messages.mapping.post 
     def post_inquiry_message(self, request, inquiry_id):
-        user = request.user
-        inquiry_exists = Inquiry.objects.filter(
-            id=inquiry_id, 
-            user=user
-        ).exists()
-
+        inquiry_exists = InquiryService.check_inquiry_exists(
+            id=inquiry_id,
+            user_id=request.user.id,
+            solved=False
+        )
         if not inquiry_exists:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        serializer = InquiryMessageCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        message = serializer.save(
-            inquiry=inquiry_id
-        )
-        message_serializer = InquiryMessageSerializer(
-            message,
-            fields_exclude=['inquiry_data'],
-            context={
-                'user': {
-                    'fields': ['id', 'username']
-                }
-            }
-        )
-
-        inquiry = InquiryService.get_inquiry_by_id(inquiry_id)
-        inquiry.updated_at = datetime.now(timezone.utc)
-        inquiry.save()
-
-        serializer = InquirySerializerService.serialize_inquiry_for_update(request, inquiry)
-
-        send_update_to_all_parties_regarding_inquiry(
-            inquiry,
-            user,
-            message_serializer,
-            serializer
-        )
+        message = InquirySerializerService.create_inquiry_message(inquiry_id, request.data)
+        broadcast_inquiry_updates_for_new_message_to_all_parties.delay(inquiry_id, message['id'])
         
-        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+        return Response(status=HTTP_201_CREATED, data={'id': str(message['id'])})
     
     @action(
         detail=False,
@@ -573,7 +601,8 @@ class UserViewSet(ViewSet):
     )
     def get_notifications(self, request, pk=None):
         notifications = NotificationService.get_user_notifications_with_request(request)
-        pagination = NotificationHeaderPageNumberPagination()
+
+        pagination = get_notification_pagination_class(request.query_params.get('context', 'default'))()
         paginated_data = pagination.paginate_queryset(notifications, request)
 
         serializer = NotificationSerializerService.serialize_notifications(paginated_data)
@@ -582,7 +611,7 @@ class UserViewSet(ViewSet):
     @get_notifications.mapping.delete
     def delete_notifications(self, request, pk=None):
         try:
-            NotificationService.delete_user_notifications(request.user)
+            NotificationService.delete_user_notifications(request.user, request.data)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
 
@@ -591,7 +620,7 @@ class UserViewSet(ViewSet):
     @get_notifications.mapping.patch
     def mark_notifications_as_read(self, request, pk=None):
         try:
-            NotificationService.mark_user_notifications_as_read(request.user)
+            NotificationService.mark_user_notifications_as_read(request.user, request.data)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
 
@@ -636,7 +665,7 @@ class UserViewSet(ViewSet):
     def get_unread_notifications(self, request):
         notifications = NotificationService.get_user_unread_notifications_with_request(request)
 
-        pagination = NotificationHeaderPageNumberPagination()
+        pagination = get_notification_pagination_class(request.query_params.get('context', 'default'))()
         paginated_data = pagination.paginate_queryset(notifications, request)
 
         serializer = NotificationSerializerService.serialize_notifications(paginated_data)
@@ -650,6 +679,7 @@ class UserViewSet(ViewSet):
     def get_unread_notifications_count(self, request):
         count = NotificationService.get_user_unread_notifications_count(request.user)
         return Response({'count': count})
+
 
 class JWTViewSet(ViewSet):
     permission_classes = [IsAuthenticated]

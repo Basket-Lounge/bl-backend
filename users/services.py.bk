@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Tuple, Any
+from api.exceptions import AnonymousUserError, BadRequestError, NotFoundError
 from api.websocket import send_message_to_centrifuge
 from management.models import (
     Inquiry, 
@@ -8,11 +9,14 @@ from management.models import (
     InquiryModeratorMessage, 
     InquiryTypeDisplayName
 )
-from management.serializers import InquirySerializer
-from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike
+from management.serializers import InquiryCommonMessageSerializer, InquiryMessageCreateSerializer, InquirySerializer
+from teams.models import Post, PostComment, PostCommentLike, PostLike, PostStatusDisplayName, TeamLike, TeamName
 from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 
-from django.db.models import Q, Exists, OuterRef, Prefetch
+from django.db.models import Q, Exists, OuterRef, Prefetch, Count, F, Subquery
+from django.db.models import Value, CharField, DateTimeField, IntegerField
+from django.db.models.manager import BaseManager
+from django.db.models.query import QuerySet
 
 from users.serializers import (
     PostCommentSerializer, 
@@ -22,6 +26,8 @@ from users.serializers import (
     UserSerializer, 
     UserUpdateSerializer
 )
+
+from rest_framework.request import Request
 
 
 user_queryset_allowed_order_by_fields = (
@@ -77,7 +83,12 @@ def create_user_queryset_without_prefetch(
 
     roles_filter : str | None = request.query_params.get('roles', None)
     if roles_filter is not None:
-        roles_filter = roles_filter.split(',')
+        unfiltered_roles_filter = roles_filter.split(',')
+        roles_filter = []
+
+        for role in unfiltered_roles_filter:
+            if role.isdigit():
+                roles_filter.append(int(role))
 
     sort_by : str | None = request.query_params.get('sort', None)
     if sort_by is not None:
@@ -332,26 +343,27 @@ def send_update_to_all_parties_regarding_inquiry(
     inquiry: Inquiry,
     user: User,
     message_serializer,
-    inquiry_update_serializer
+    inquiry_update_serializer: InquirySerializer
 ):
     inquiry_channel_name = f'users/inquiries/{inquiry.id}'
     send_message_to_centrifuge(
         inquiry_channel_name,
         message_serializer.data
     )
-    
+
     user_inquiry_notification_channel_name = f'users/{user.id}/inquiries/updates'
     send_message_to_centrifuge(
         user_inquiry_notification_channel_name,
         inquiry_update_serializer.data
     )
-    
+
+    ## TODO: Fix this to reflect the changes in both the queryset and the serializer 
     for moderator in inquiry.inquirymoderator_set.all():
         moderator_inquiry_notification_channel_name = f'moderators/{moderator.moderator.id}/inquiries/updates'
 
         inquiry_for_moderators_serializer = InquirySerializer(
             inquiry,
-            fields_exclude=['user_data', 'messages'],
+            fields_exclude=['user_data', 'unread_messages_count'],
             context={
                 'user': {
                     'fields': ['id', 'username']
@@ -359,29 +371,11 @@ def send_update_to_all_parties_regarding_inquiry(
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
-                'inquirymessage_extra': {
-                    'user_last_read_at': {
-                        'id': moderator.moderator.id,
-                        'last_read_at': moderator.last_read_at
-                    }
-                },
                 'inquirymoderator': {
-                    'fields': ['moderator_data', 'last_message', 'unread_messages_count']
+                    'fields': ['moderator_data', 'last_message']
                 },
                 'moderator': {
                     'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        'id': moderator.moderator.id,
-                        'last_read_at': moderator.last_read_at
-                    }
                 },
                 'language': {
                     'fields': ['name']
@@ -586,6 +580,8 @@ class UserViewService:
             if request.user.id == user_id:
                 q = Q(status__name='created') | Q(status__name='hidden')
 
+        teamname_queryset = TeamName.objects.select_related('language')
+
         posts = create_post_queryset_without_prefetch_for_user(
             request,
             fields_only=[
@@ -601,15 +597,29 @@ class UserViewService:
                 'status__name'
             ],
             user__id=user_id,
+        ).annotate(
+            likes_count=Count('postlike'),
+            comments_count=Count('postcomment'),
         ).prefetch_related(
-            'postlike_set',
-            'postcomment_set',
             Prefetch(
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
                     'language'
                 )
             ),
+            Prefetch(
+                'team__teamname_set',
+                queryset=teamname_queryset
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=teamname_queryset
+                    )
+                )
+            )
         ).filter(q)
 
         if request.user.is_authenticated:
@@ -641,9 +651,9 @@ class UserViewService:
             ],
             user__id=user_id,
             status__name='created'
-        ).prefetch_related(
-            'postcommentlike_set',
-            'postcommentreply_set',
+        ).annotate(
+            likes_count=Count('postcommentlike'),
+            replies_count=Count('postcommentreply')
         ).select_related(
             'user',
             'status',
@@ -661,9 +671,20 @@ class UserViewService:
 
 class UserChatService:
     @staticmethod
-    def get_chat(request, user_id):
+    def get_user_chat(requesting_user: User, user_id: int):
+        """
+        Get a chat between two users.
+
+        Args:
+            requesting_user (User): The user that is requesting the chat.
+            user_id (int): The id of the user that the chat is with.
+        
+        Returns:
+            UserChat | None
+        """
+
         return UserChat.objects.filter(
-            userchatparticipant__user=request.user,
+            userchatparticipant__user=requesting_user,
             userchatparticipant__chat_blocked=False,
             userchatparticipant__user__chat_blocked=False,
         ).filter(
@@ -671,13 +692,16 @@ class UserChatService:
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    Prefetch(
-                        'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.order_by('-created_at')
-                    ),
-                ).select_related(
-                    'user',
+                # UserChatParticipant.objects.prefetch_related(
+                #     Prefetch(
+                #         'userchatparticipantmessage_set',
+                #         queryset=UserChatParticipantMessage.objects.order_by('-created_at')
+                #     ),
+                # ).select_related(
+                #     'user',
+                # )
+                UserChatParticipant.objects.select_related(
+                    'user'
                 )
             )
         ).first()
@@ -687,13 +711,16 @@ class UserChatService:
         return UserChat.objects.prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    Prefetch(
-                        'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.order_by('-created_at')
-                    ),
-                ).select_related(
-                    'user',
+                # UserChatParticipant.objects.prefetch_related(
+                #     Prefetch(
+                #         'userchatparticipantmessage_set',
+                #         queryset=UserChatParticipantMessage.objects.order_by('-created_at')
+                #     ),
+                # ).select_related(
+                #     'user',
+                # )
+                UserChatParticipant.objects.select_related(
+                    'user'
                 )
             )
         ).filter(
@@ -701,7 +728,20 @@ class UserChatService:
         ).first()
     
     @staticmethod
-    def get_my_chats(request):
+    def get_my_chats_with_request(request: Request):
+        """
+        Get all chats that the user is participating in. The request must be authenticated.
+
+        Args:
+            request (Request): The request object.
+        
+        Returns:
+            QuerySet: The queryset of the chats.
+        """
+
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
+
         return create_userchat_queryset_without_prefetch_for_user(
             request,
             fields_only=[],
@@ -711,13 +751,8 @@ class UserChatService:
         ).prefetch_related(
             Prefetch(
                 'userchatparticipant_set',
-                UserChatParticipant.objects.prefetch_related(
-                    Prefetch(
-                        'userchatparticipantmessage_set',
-                        queryset=UserChatParticipantMessage.objects.order_by('created_at')
-                    ),
-                ).select_related(
-                    'user',
+                UserChatParticipant.objects.select_related(
+                    'user'
                 )
             )
         )
@@ -749,6 +784,71 @@ class UserChatService:
         return message, chat
     
     @staticmethod
+    def get_chat_messages(chat: UserChat, user: User = None) -> BaseManager[UserChatParticipantMessage]:
+        """
+        Get all active messages in a chat.
+
+        Args:
+            chat (UserChat): The chat object.
+            user (User): The user that is requesting the messages.
+        
+        Returns:
+            QuerySet: The queryset of the messages.
+
+        Raises:
+            BadRequestError:
+              - If the chat is blocked by the user.
+            NotFoundError:
+              - If the chat is deleted by the user.
+        """
+
+        user_participant = chat.userchatparticipant_set.filter(user=user).first()
+        if user_participant is None:
+            return None
+
+        if user_participant.chat_blocked:
+            raise BadRequestError('A user has blocked the chat.')
+        
+        if user_participant.chat_deleted:
+            raise NotFoundError()
+        
+        last_deleted_at = user_participant.last_deleted_at 
+        last_blocked_at = user_participant.last_blocked_at 
+
+        last_at = None
+
+        if last_deleted_at is not None and last_blocked_at is not None:
+            if last_deleted_at > last_blocked_at:
+                last_at = last_deleted_at
+        elif last_deleted_at is not None:
+            last_at = last_deleted_at
+        elif last_blocked_at is not None:
+            last_at = last_blocked_at
+
+        queryset = UserChatParticipantMessage.objects.filter(
+            sender__chat=chat
+        ).select_related(
+            'sender__user',
+        ).order_by(
+            '-created_at'
+        ).only(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'sender__id',
+            'sender__last_deleted_at',
+            'sender__last_blocked_at',
+            'sender__user__id',
+            'sender__user__username',
+        )
+
+        if last_at is not None:
+            queryset = queryset.filter(created_at__gt=last_at)
+
+        return queryset
+    
+    @staticmethod
     def mark_chat_as_read(request, user_id):
         user = request.user
         chat = UserChat.objects.filter(
@@ -768,10 +868,20 @@ class UserChatService:
         return chat
 
     @staticmethod
-    def delete_chat(request, user_id):
-        user = request.user
+    def delete_chat(requesting_user: User, user_id: int):
+        """
+        Delete a chat between two users.
+
+        Args:
+            requesting_user (User): The user that is requesting the deletion.
+            user_id (int): The id of the user that the chat is with.
+        
+        Returns:
+            None
+        """
+
         chat = UserChat.objects.filter(
-            userchatparticipant__user=user
+            userchatparticipant__user=requesting_user
         ).filter(
             userchatparticipant__user__id=user_id
         ).first()
@@ -781,7 +891,7 @@ class UserChatService:
 
         UserChatParticipant.objects.filter(
             chat=chat,
-            user=user
+            user=requesting_user
         ).update(chat_deleted=True, last_deleted_at=datetime.now(timezone.utc))
 
         UserChatParticipant.objects.filter(
@@ -927,16 +1037,7 @@ class UserChatSerializerService:
             ],
             context={
                 'userchatparticipant': {
-                    'fields': ['user_data', 'messages']
-                },
-                'userchatparticipantmessage': {
-                    'fields_exclude': ['sender_data', 'user_data'],
-                },
-                'userchatparticipantmessage_extra': {
-                    'user_last_deleted_at': {
-                        'id': user_participant.id,
-                        'last_deleted_at': user_participant.last_deleted_at
-                    }
+                    'fields': ['user_data']
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -1002,10 +1103,44 @@ class UserChatSerializerService:
             }
         )
     
+    @staticmethod
+    def serialize_messages_for_chat(messages: BaseManager[UserChatParticipantMessage] | list) -> UserChatParticipantMessageSerializer:
+        return UserChatParticipantMessageSerializer(
+            messages,
+            many=True,
+            fields_exclude=['sender_data'],
+            context={
+                'user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+    
 
 class InquiryService:
     @staticmethod
     def get_my_inquiries(request):
+        latest_message_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_message_created_at_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('created_at')[:1]
+
+        unread_messages_count_subquery = Count(
+            'inquirymoderator__inquirymoderatormessage',
+            filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+        )
+
+        latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('created_at')[:1]
+
         return Inquiry.objects.filter(user=request.user).order_by('-created_at').select_related(
             'inquiry_type',
             'user'
@@ -1017,25 +1152,44 @@ class InquiryService:
                 )
             ),
             Prefetch(
-                'messages',
-                queryset=InquiryMessage.objects.order_by('-created_at')
-            ),
-            Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
                     'inquiry',
                     'moderator'
-                ).prefetch_related(
-                    Prefetch(
-                        'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
-                    )
+                ).annotate(
+                    last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                    last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
                 )
             )
+        ).annotate(
+            last_message=Subquery(latest_message_subquery, output_field=CharField()),
+            last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+            unread_messages_count=unread_messages_count_subquery
         )
     
     @staticmethod
     def get_inquiry(request, inquiry_id):
+        latest_message_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_message_created_at_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('created_at')[:1]
+
+        unread_messages_count_subquery = Count(
+            'inquirymoderator__inquirymoderatormessage',
+            filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+        )
+
+        latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('created_at')[:1]
+
         return Inquiry.objects.filter(
             id=inquiry_id, 
             user=request.user
@@ -1050,24 +1204,44 @@ class InquiryService:
                 )
             ),
             Prefetch(
-                'messages',
-                queryset=InquiryMessage.objects.order_by('-created_at')
-            ),
-            Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
+                    'inquiry',
                     'moderator'
-                ).prefetch_related(
-                    Prefetch(
-                        'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
-                    )
+                ).annotate(
+                    last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                    last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
                 )
             )
+        ).annotate(
+            last_message=Subquery(latest_message_subquery, output_field=CharField()),
+            last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+            unread_messages_count=unread_messages_count_subquery
         ).first()
 
     @staticmethod
     def get_inquiry_by_id(inquiry_id):
+        latest_message_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_message_created_at_subquery = InquiryMessage.objects.filter(
+            inquiry=OuterRef('id')
+        ).order_by('-created_at').values('created_at')[:1]
+
+        unread_messages_count_subquery = Count(
+            'inquirymoderator__inquirymoderatormessage',
+            filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+        )
+
+        latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('message')[:1]
+
+        latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry=OuterRef('inquiry__id')
+        ).order_by('-created_at').values('created_at')[:1]
+
         return Inquiry.objects.filter(id=inquiry_id).select_related(
             'inquiry_type',
             'user'
@@ -1079,24 +1253,130 @@ class InquiryService:
                 )
             ),
             Prefetch(
-                'messages',
-                queryset=InquiryMessage.objects.order_by('-created_at')
-            ),
-            Prefetch(
                 'inquirymoderator_set',
                 queryset=InquiryModerator.objects.select_related(
+                    'inquiry',
                     'moderator'
-                ).prefetch_related(
-                    Prefetch(
-                        'inquirymoderatormessage_set',
-                        queryset=InquiryModeratorMessage.objects.order_by('-created_at')
-                    )
+                ).annotate(
+                    last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                    last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
                 )
             )
+        ).annotate(
+            last_message=Subquery(latest_message_subquery, output_field=CharField()),
+            last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+            unread_messages_count=unread_messages_count_subquery
         ).first()
+    
+    @staticmethod
+    def get_inquiry_messages(
+        inquiry_id: str, 
+        datetime_str: str = None
+    ) -> Tuple[QuerySet[InquiryMessage, dict[str, Any]], QuerySet[InquiryModeratorMessage, dict[str, Any]]]:
+        """
+        Retrieve the messages of an inquiry.
+
+        Args:
+            inquiry_id (str): The id of the inquiry.
+            datetime_str (str): The datetime string to filter the messages. Should be in the format of '%Y-%m-%dT%H:%M:%S.%fZ'.
+        
+        Returns:
+            Tuple[BaseManager[InquiryMessage], BaseManager[InquiryModeratorMessage]]: The queryset of the messages.
+        """
+        if not inquiry_id:
+            raise BadRequestError('Inquiry id is required.')
+        
+        if datetime_str is not None:
+            try:
+                datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            except ValueError:
+                raise BadRequestError('Invalid datetime string.')
+        
+        messages_qs = InquiryMessage.objects.filter(
+            inquiry__id=inquiry_id,
+        ).order_by('-created_at').select_related(
+            'inquiry__user'
+        ).annotate(
+            user_type=Value('User', output_field=CharField()),
+            user_id=F('inquiry__user__id'),
+            user_username=F('inquiry__user__username')
+        ).values(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'user_type',
+            'user_id',
+            'user_username'
+        )
+
+        if datetime_str is not None:
+            datetime_obj = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            messages_qs = messages_qs.filter(created_at__lt=datetime_obj)
+        else:
+            messages_qs = messages_qs.filter(
+                created_at__lt=datetime.now(timezone.utc)
+            )
+
+        moderator_messages_qs = InquiryModeratorMessage.objects.filter(
+            inquiry_moderator__inquiry__id=inquiry_id,
+        ).order_by('-created_at').select_related(
+            'inquiry_moderator__moderator'
+        ).annotate(
+            user_type=Value('Moderator', output_field=CharField()),
+            user_id=F('inquiry_moderator__moderator__id'),
+            user_username=F('inquiry_moderator__moderator__username')
+        ).values(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'user_type',
+            'user_id',
+            'user_username'
+        )
+
+        if datetime_str is not None:
+            datetime_obj = datetime.strptime(datetime_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            moderator_messages_qs = moderator_messages_qs.filter(created_at__lt=datetime_obj)
+        else:
+            moderator_messages_qs = moderator_messages_qs.filter(
+                created_at__lt=datetime.now(timezone.utc)
+            )
+
+        return messages_qs, moderator_messages_qs
+
+    @staticmethod 
+    def check_inquiry_exists(**kwargs):
+        return Inquiry.objects.filter(
+            **kwargs
+        ).exists()
+    
+    @staticmethod
+    def mark_inquiry_as_read(inquiry_id):
+        Inquiry.objects.filter(id=inquiry_id).update(last_read_at=datetime.now(timezone.utc))
+
+    @staticmethod
+    def update_updated_at(inquiry_id: str):
+        inquiry = Inquiry.objects.get(id=inquiry_id)
+        inquiry.save()
     
 
 class InquirySerializerService:
+    @staticmethod
+    def create_inquiry_message(inquiry_id, data: dict[str, str]) -> InquiryMessage:
+        if not inquiry_id:
+            raise BadRequestError('Inquiry id is required.')
+        
+        if not "message" in data:
+            raise BadRequestError('Message is required.')
+
+        serializer = InquiryMessageCreateSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        return serializer.save(
+            inquiry=inquiry_id
+        )
+
     @staticmethod
     def serialize_inquiries(request, inquiries):
         return InquirySerializer(
@@ -1104,8 +1384,6 @@ class InquirySerializerService:
             many=True,
             fields_exclude=[
                 'user_data', 
-                'unread_messages_count', 
-                'messages'
             ],
             context={
                 'inquiry': {
@@ -1114,30 +1392,14 @@ class InquirySerializerService:
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
                 'inquirymoderator': {
                     'fields': [
                         'moderator_data', 
                         'last_message',
-                        'unread_messages_count'
                     ]
                 },
                 'moderator': {
                     'fields': ['id', 'username']
-                },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        inquiry.id: {
-                            'id': request.user.id, 
-                            'last_read_at': inquiry.last_read_at
-                        }
-                        for inquiry in inquiries
-                    }
                 },
                 'language': {
                     'fields': ['name']
@@ -1177,13 +1439,11 @@ class InquirySerializerService:
         )
     
     @staticmethod
-    def serialize_inquiry_for_update(request, inquiry):
+    def serialize_inquiry_for_update(inquiry):
         return InquirySerializer(
             inquiry,
             fields_exclude=[
                 'user_data', 
-                'messages', 
-                'unread_messages_count'
             ],
             context={
                 'user': {
@@ -1192,32 +1452,26 @@ class InquirySerializerService:
                 'inquirytypedisplayname': {
                     'fields': ['display_name', 'language_data']
                 },
-                'inquirymessage': {
-                    'fields_exclude': ['inquiry_data', 'user_data']
-                },
                 'inquirymoderator': {
                     'fields': [
                         'moderator_data', 
                         'last_message', 
-                        'unread_messages_count'
                     ]
                 },
                 'moderator': {
                     'fields': ['id', 'username']
                 },
-                'inquirymoderatormessage': {
-                    'fields_exclude': ['inquiry_moderator_data', 'user_data']
-                },
-                'inquirymoderatormessage_extra': {
-                    'user_last_read_at': {
-                        'id': request.user.id,
-                        'last_read_at': inquiry.last_read_at
-                    }
-                },
                 'language': {
                     'fields': ['name']
                 }
             }
+        )
+    
+    @staticmethod
+    def serialize_inquiry_messages(messages) -> InquiryCommonMessageSerializer:
+        return InquiryCommonMessageSerializer(
+            messages,
+            many=True,
         )
     
 class PostCommentSerializerService:

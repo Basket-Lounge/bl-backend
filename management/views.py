@@ -9,7 +9,9 @@ from django.views.decorators.cache import cache_page
 from rest_framework.permissions import AllowAny
 from rest_framework.decorators import action
 
-from api.paginators import CustomPageNumberPagination
+from api.exceptions import CustomError
+from api.paginators import CustomPageNumberPagination, InquiryMessageCursorPagination
+from management.models import Inquiry
 from management.serializers import (
     InquiryCreateSerializer, 
 )
@@ -20,32 +22,31 @@ from management.services.models_services import (
     InquiryService,
     InquiryModeratorService,
     ReportService,
-    filter_and_fetch_inquiries_in_desc_order_based_on_updated_at,
-    filter_and_fetch_inquiry
 )
 from management.services.serializers_services import (
+    InquiryModeratorSerializerService,
     PostManagementSerializerService,
     UserManagementSerializerService,
     InquirySerializerService,
     ReportSerializerService,
-    send_inquiry_notification_to_all_channels_for_moderators,
-    send_inquiry_notification_to_specific_moderator,
-    send_inquiry_notification_to_user,
     send_new_moderator_to_live_chat,
-    send_partially_updated_inquiry_to_live_chat,
     send_unassigned_inquiry_to_live_chat,
-    serialize_inquiries_for_list,
     serialize_report,
     serialize_reports
 )
 
-from management.tasks import broadcast_inquiry_updates_to_all_parties
+from management.tasks import (
+    broadcast_inquiry_moderator_assignment_to_all_parties,
+    broadcast_inquiry_moderator_unassignment_to_all_parties,
+    broadcast_inquiry_updates_for_new_message_to_all_parties, 
+    broadcast_inquiry_updates_to_all_parties
+)
 from teams.models import  PostComment
 from teams.services import PostSerializerService, PostService, TeamSerializerService, TeamService
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
 from users.models import Role, User
 from users.serializers import RoleSerializer
-from users.services import PostCommentSerializerService, UserChatSerializerService
+from users.services.serializers_services import PostCommentSerializerService, UserChatSerializerService
 from users.utils import generate_websocket_subscription_token
 
 
@@ -171,7 +172,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     def list(self, request):
-        inquiries = InquiryModeratorService.get_inquiries_based_on_recent_updated_at(request)
+        inquiries = InquiryModeratorService.get_inquiries_with_request(request)
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
@@ -180,27 +181,59 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         return pagination.get_paginated_response(serializer.data)
     
     def partial_update(self, request, pk=None):
-        updated, error, status = InquiryModeratorService.update_inquiry(request, pk)
+        updated, error, status = InquiryModeratorSerializerService.update_inquiry(request, pk)
         if error:
             return Response(status=status, data=error)
 
-        inquiry = InquiryService.get_inquiry_without_messages(pk)
-        notification_inquiry = filter_and_fetch_inquiry(id=pk)
+        broadcast_inquiry_updates_to_all_parties.delay(pk)
+        return Response(status=HTTP_200_OK)
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='messages'
+    )
+    def get_inquiry_messages(self, request, pk=None):
+        inquiry = Inquiry.objects.filter(
+            id=pk
+        ).first()
 
-        send_partially_updated_inquiry_to_live_chat(inquiry)
-        send_inquiry_notification_to_user(
-            notification_inquiry,
-            inquiry.user.id,
-            inquiry.last_read_at
-        )
-        send_inquiry_notification_to_all_channels_for_moderators(notification_inquiry)
+        if not inquiry:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        pagination = InquiryMessageCursorPagination()
+        try:
+            paginated_data = pagination.paginate_querysets(pk, request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
-        for moderator in inquiry.inquirymoderator_set.all():
-            send_inquiry_notification_to_specific_moderator(
-                notification_inquiry,
-                moderator.moderator.id,
-                moderator.last_read_at
-            )
+        serializer = InquirySerializerService.serialize_inquiry_messages(paginated_data)
+        return pagination.get_paginated_response(serializer.data)
+
+    @get_inquiry_messages.mapping.post 
+    def send_message(self, request, pk=None):
+        try:
+            message = InquiryModeratorSerializerService.create_message_for_inquiry(request, pk)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
+        broadcast_inquiry_updates_for_new_message_to_all_parties.delay(pk, message.id)
+        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'mark-as-read',
+    )
+    def mark_inquiry_as_read(self, request, pk=None):
+        inquiry = InquiryModeratorService.check_inquiry_moderator_exists(pk, request.user)
+        if not inquiry:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        InquiryModeratorService.mark_inquiry_as_read(pk, request.user)
+        InquiryModeratorService.update_updated_at(pk)
+
+        broadcast_inquiry_updates_to_all_parties.delay(pk)
 
         return Response(status=HTTP_200_OK)
     
@@ -210,14 +243,14 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path='unassigned'
     )
     def list_unassigned_inquiries(self, request):
-        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+        inquiries = InquiryModeratorService.get_inquiries_with_request(
             request,
             inquirymoderator__isnull=True
         )
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
-        serializer = serialize_inquiries_for_list(inquiries)
+        serializer = InquirySerializerService.serialize_inquiries(inquiries)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -227,14 +260,14 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path=r'assigned'
     )
     def list_assigned_inquiries(self, request):
-        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+        inquiries = InquiryModeratorService.get_inquiries_with_request(
             request,
             inquirymoderator__isnull=False
         )
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
-        serializer = serialize_inquiries_for_list(inquiries)
+        serializer = InquirySerializerService.serialize_inquiries(inquiries)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -244,14 +277,14 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path=r'solved'
     )
     def list_solved_inquiries(self, request):
-        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+        inquiries = InquiryModeratorService.get_inquiries_with_request(
             request,
             solved=True
         )
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
-        serializer = serialize_inquiries_for_list(inquiries)
+        serializer = InquirySerializerService.serialize_inquiries(inquiries)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -261,14 +294,14 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path=r'unsolved'
     )
     def list_unsolved_inquiries(self, request):
-        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+        inquiries = InquiryModeratorService.get_inquiries_with_request(
             request,
             solved=False
         )
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
-        serializer = serialize_inquiries_for_list(inquiries)
+        serializer = InquirySerializerService.serialize_inquiries(inquiries)
 
         return pagination.get_paginated_response(serializer.data)
     
@@ -278,19 +311,17 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
         url_path=r'mine'
     )
     def list_my_inquiries(self, request):
-        inquiries = filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(
+        inquiries = InquiryModeratorService.get_inquiries_with_request(
             request,
-            inquirymoderator__moderator=request.user
+            inquirymoderator__moderator=request.user,
+            inquirymoderator__in_charge=True
         )
 
         pagination = CustomPageNumberPagination()
         inquiries = pagination.paginate_queryset(inquiries, request)
 
-        data = InquirySerializerService.serialize_inquiries_for_specific_moderator(
-            request,
-            inquiries,
-        )
-        return pagination.get_paginated_response(data)
+        serializer = InquirySerializerService.serialize_inquiries_for_specific_moderator(inquiries)
+        return pagination.get_paginated_response(serializer.data)
     
     @action(
         detail=True,
@@ -303,7 +334,7 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         InquiryModeratorService.assign_moderator(request, inquiry)
-        send_new_moderator_to_live_chat(inquiry, request.user.id)
+        broadcast_inquiry_moderator_assignment_to_all_parties.delay(pk, request.user.id)
         return Response(status=HTTP_201_CREATED)
     
     @assign_moderator.mapping.delete
@@ -313,21 +344,8 @@ class InquiryModeratorViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         InquiryModeratorService.unassign_moderator(request, inquiry)
-        send_unassigned_inquiry_to_live_chat(inquiry, request.user.id)
+        broadcast_inquiry_moderator_unassignment_to_all_parties.delay(pk, request.user.id)
         return Response(status=HTTP_200_OK)
-    
-    @action(
-        detail=True,
-        methods=['post'],
-        url_path='messages'
-    )
-    def send_message(self, request, pk=None):
-        message, error, status = InquiryModeratorService.create_message_for_inquiry(request, pk)
-        if not message:
-            return Response(status=status, data=error)
-
-        broadcast_inquiry_updates_to_all_parties.delay(pk, message.id)
-        return Response(status=HTTP_201_CREATED, data={'id': str(message.id)})
 
 
 class ReportAdminViewSet(viewsets.ViewSet):
@@ -351,7 +369,7 @@ class ReportAdminViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     def partial_update(self, request, pk=None):
-        updated, error, status = ReportService.update_report(request, pk)
+        updated, error, status = ReportSerializerService.update_report(request, pk)
         if error:
             return Response(status=status, data=error)
 
@@ -391,7 +409,7 @@ class ReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def create(self, request):
-        created, error, status = ReportService.create_report(request)
+        created, error, status = ReportSerializerService.create_report(request)
         if error:
             return Response(status=status, data=error)
 
@@ -422,7 +440,7 @@ class PostManagementViewSet(viewsets.ViewSet):
         return pagination.get_paginated_response(serializer.data)
 
     def partial_update(self, request, pk=None): 
-        updated, error, status = PostManagementService.update_post(request, pk)
+        updated, error, status = PostManagementSerializerService.update_post(request, pk)
         if not updated:
             return Response(status=status, data=error)
 
@@ -454,7 +472,7 @@ class UserManagementViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     def partial_update(self, request, pk=None):
-        updated, error, status = UserManagementService.update_user(request, pk)
+        updated, error, status = UserManagementSerializerService.update_user(request, pk)
         if not updated:
             return Response(status=status, data=error)
 

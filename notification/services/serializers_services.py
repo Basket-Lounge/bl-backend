@@ -1,13 +1,33 @@
 from notification.models import (
-    Notification, 
+    Notification,
+    NotificationTemplateType, 
 )
 
-from notification.serializers import NotificationSerializer
+from notification.serializers import NotificationSerializer, NotificationTemplateTypeSerializer
 
 from django.db.models.manager import BaseManager
 
 
 class NotificationSerializerService:
+    @staticmethod
+    def serialize_notification_template_types(notification_template_types: BaseManager[NotificationTemplateType]) -> NotificationTemplateTypeSerializer:
+        """
+        Serialize a queryset of notification template types.
+
+        Args:
+        notification_template_types (BaseManager[NotificationTemplateType]): The queryset of notification template types.
+        """
+
+        return NotificationTemplateTypeSerializer(
+            notification_template_types, 
+            many=True,
+            context={
+                'notificationtemplatetypedisplayname': {
+                    'fields': ['id', 'name', 'language_data']
+                }
+            }
+        )
+
     @staticmethod
     def serialize_notifications(notifications: BaseManager[Notification]) -> NotificationSerializer:
         """
@@ -21,7 +41,6 @@ class NotificationSerializerService:
             notifications, 
             fields_exclude=[
                 'actors',
-                'template_data',
                 'data'
             ],
             many=True,
@@ -47,6 +66,15 @@ class NotificationSerializerService:
                 },
                 'notificationrecipient': {
                     'fields': ['read', 'read_at', 'recipient_data']
+                },
+                'notificationtemplate': {
+                    'fields': ['id', 'type_data']
+                },
+                'notificationtemplatetype': {
+                    'fields': ['display_names', 'color_code']
+                },
+                'notificationtemplatetypedisplayname': {
+                    'fields': ['id', 'name', 'language_data']
                 },
                 'user': {
                     'fields': ['id', 'username']
@@ -94,12 +122,20 @@ class NotificationSerializerService:
             notification,
             fields_exclude=[
                 'actors',
-                'template_data',
                 'data'
             ],
             context={
                 'language': {
                     'fields': ['id', 'name']
+                },
+                'notificationtemplate': {
+                    'fields': ['id', 'type_data']
+                },
+                'notificationtemplatetype': {
+                    'fields': ['display_names', 'color_code']
+                },
+                'notificationtemplatetypedisplayname': {
+                    'fields': ['id', 'name', 'language_data']
                 },
                 'notificationtemplatebody': {
                     'fields': ['id', 'subject', 'body', 'language_data']

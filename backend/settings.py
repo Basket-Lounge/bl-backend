@@ -195,7 +195,29 @@ else:
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-if not DEVELOPMENT:
+if TESTING:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env.str('TEST_DB_NAME'),
+            'USER': env.str('TEST_DB_USER'),
+            'PASSWORD': env.str('TEST_DB_PASSWORD'),
+            'HOST': env.str('TEST_DB_HOST'),
+            'PORT': env.str('TEST_DB_PORT'),
+        },
+    }
+elif DEVELOPMENT:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': env.str('DB_NAME'),
+            'USER': env.str('DB_USER'),
+            'PASSWORD': env.str('DB_PASSWORD'),
+            'HOST': env.str('DB_HOST'),
+            'PORT': env.str('DB_PORT'),
+        },
+    }
+else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -222,18 +244,6 @@ if not DEVELOPMENT:
             'PORT': env.str('DB_PORT_REPLICA2'),
         }
     }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': env.str('DB_NAME'),
-            'USER': env.str('DB_USER'),
-            'PASSWORD': env.str('DB_PASSWORD'),
-            'HOST': env.str('DB_HOST'),
-            'PORT': env.str('DB_PORT'),
-        },
-    }
-
 
 DATABASE_ROUTERS = [
     "api.database_routers.DBRouter" if not DEVELOPMENT and not TESTING else "api.database_routers.TestDBRouter"

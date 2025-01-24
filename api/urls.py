@@ -1,6 +1,15 @@
 from django.urls import include, path
 from games.views import GameViewSet
-from management.views import InquiryModeratorViewSet, InquiryViewSet, JWTAdminSubscriptionViewSet, PostManagementViewSet, ReportAdminViewSet, ReportViewSet, UserManagementViewSet
+from management.views import (
+    InquiryModeratorViewSet, 
+    InquiryViewSet, 
+    JWTAdminSubscriptionViewSet, 
+    PostManagementViewSet, 
+    ReportAdminViewSet, 
+    ReportViewSet, 
+    UserManagementViewSet
+)
+from notification.views import NotificationViewSet
 from players.views import PlayersViewSet
 from rest_framework.routers import DefaultRouter
 
@@ -11,6 +20,7 @@ from users.views import JWTViewSet, UserViewSet
 router = DefaultRouter()
 router.register(r'games', GameViewSet, basename='game')
 router.register(r'inquiries', InquiryViewSet, basename='inquiry')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'reports', ReportViewSet, basename='report')
 router.register(r'players', PlayersViewSet, basename='player')
 router.register(r'teams', TeamViewSet, basename='team')

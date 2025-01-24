@@ -1,9 +1,17 @@
+from base64 import b64decode, b64encode
 from django.core.paginator import Paginator
 from django.db import connection, transaction
 from django.db.utils import OperationalError
 from django.utils.functional import cached_property
 
-from rest_framework.pagination import PageNumberPagination
+from rest_framework.pagination import PageNumberPagination, CursorPagination
+from rest_framework.response import Response
+from rest_framework.request import Request
+from rest_framework.utils.urls import replace_query_param
+
+from api.exceptions import BadRequestError
+from management.models import InquiryMessage
+from users.services.models_services import InquiryService
 
 
 class LargeTablePaginator(Paginator):
@@ -53,8 +61,112 @@ class CustomPageNumberPagination(PageNumberPagination):
     page_size = 10
     page_query_param = 'page'
 
+    def get_paginated_response(self, data):
+        # Calculate the first and last page numbers
+        first_page = 1
+        last_page = self.page.paginator.num_pages
+
+        return Response({
+            'count': self.page.paginator.count,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'current_page': self.page.number,
+            'first_page': first_page,
+            'last_page': last_page,
+            'results': data
+        })
+
 
 class NotificationHeaderPageNumberPagination(CustomPageNumberPagination):
     page_size = 3
     page_query_param = 'page'
     max_page_size = 3
+
+
+class CustomCursorPagination(CursorPagination):
+    ordering = '-created_at'
+
+
+class ChatMessageCursorPagination(CustomCursorPagination):
+    cursor_query_param = 'cursor'
+    page_size = 25
+
+
+class InquiryMessageCursorPagination:
+    cursor_query_param = 'cursor'
+    page_size = 25
+
+    def paginate_querysets(
+        self, 
+        inquiry_id: str,
+        request: Request
+    ):
+        """
+        Returns a paginated list of inquiry messages.
+
+        Args:
+            inquiry_id (str): The id of the inquiry.
+            request (Request): The request object.
+        
+        Returns:
+            list: The paginated list of inquiry messages
+        
+        Raises:
+            BadRequestError: If the cursor is invalid.
+        """
+
+        cursor = request.query_params.get(self.cursor_query_param)
+        self.base_url = request.build_absolute_uri()
+        cursor = self.decode_cursor(request)
+
+        inquiry_messages, inquiry_moderator_messages = InquiryService.get_inquiry_messages(
+            inquiry_id, 
+            cursor
+        )
+
+        inquiry_messages = inquiry_messages[:self.page_size + 1]
+        inquiry_moderator_messages = inquiry_moderator_messages[:self.page_size + 1]
+
+        # Sort the messages based on the field 'created_at'
+        new_inquiry_messages = []
+        for message in inquiry_messages:
+            new_inquiry_messages.append(message)
+        
+        for message in inquiry_moderator_messages:
+            new_inquiry_messages.append(message)
+
+        new_inquiry_messages.sort(key=lambda x: x.created_at, reverse=True)
+        new_inquiry_messages = new_inquiry_messages[:self.page_size + 1]
+        new_inquiry_messages.reverse()
+
+        # Set the next cursor if there are more results
+        self.next_cursor = None
+        if len(new_inquiry_messages) > self.page_size:
+            next_cursor = new_inquiry_messages[1].created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            new_inquiry_messages = new_inquiry_messages[1:]
+            self.next_cursor = self.encode_cursor(next_cursor)
+
+        return new_inquiry_messages
+    
+    def get_paginated_response(self, data):
+        return Response({
+            'next': self.next_cursor,
+            'results': data
+        })
+
+    def decode_cursor(self, request: Request):
+        # Determine if we have a cursor, and if so then decode it.
+        encoded = request.query_params.get(self.cursor_query_param)
+        if encoded is None:
+            return None
+
+        try:
+            querystring = b64decode(encoded.encode('ascii')).decode('ascii')
+        except:
+            raise BadRequestError('Invalid cursor.')
+
+        return querystring
+
+    def encode_cursor(self, cursor: str):
+        encoded = b64encode(cursor.encode('ascii')).decode('ascii')
+        return replace_query_param(self.base_url, self.cursor_query_param, encoded)

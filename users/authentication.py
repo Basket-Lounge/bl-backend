@@ -9,6 +9,7 @@ from rest_framework_simplejwt.tokens import Token, AuthUser
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed
 
+from api.exceptions import ForbiddenResource
 from users.models import User
 
 
@@ -38,7 +39,7 @@ class CookieJWTAccessAuthentication(JWTAuthentication):
             raise AuthenticationFailed(_("User not found"), code='user_not_found')
         
         if user.role.name in ['deactivated', 'banned']:
-            raise AuthenticationFailed(_("User is not active"), code='user_inactive')
+            raise ForbiddenResource() 
         
         return user
     
@@ -69,7 +70,7 @@ class CookieJWTAdminAccessAuthentication(JWTAuthentication):
             raise AuthenticationFailed(_("User not found"), code='user_not_found')
         
         if user.role.weight >= 3:
-            raise AuthenticationFailed(_("User is not an admin"), code='user_not_admin')
+            raise ForbiddenResource()
         
         return user
 
@@ -100,6 +101,6 @@ class CookieJWTRefreshAuthentication(JWTAuthentication):
             raise AuthenticationFailed(_("User not found"), code='user_not_found')
         
         if user.role.name in ['deactivated', 'banned']:
-            raise AuthenticationFailed(_("User is not active"), code='user_inactive')
+            raise ForbiddenResource()
         
         return user

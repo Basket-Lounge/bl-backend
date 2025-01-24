@@ -9,11 +9,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.utils import MockResponse
 from games.models import Game
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
-from notification.models import Notification, NotificationTemplate
+from notification.models import Notification, NotificationRecipient, NotificationTemplate
 from notification.services.models_services import NotificationService
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
 from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
-from users.services import UserChatService
+from users.services.models_services import UserChatService
 from users.views import JWTViewSet, UserViewSet
 
 from unittest.mock import patch
@@ -841,31 +841,6 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse('unread_messages_count' in data['participants'][1])
         self.assertTrue('user_data' in data['participants'][0])
         self.assertTrue('user_data' in data['participants'][1])
-        self.assertTrue('messages' in data['participants'][0])
-        self.assertTrue('messages' in data['participants'][1])
-        self.assertEqual(len(data['participants'][0]['messages']), 0)
-        self.assertEqual(len(data['participants'][1]['messages']), 0)
-
-        # Create a message
-        UserChatParticipantMessage.objects.create(
-            sender=part1,
-            message="test message"
-        )
-        UserChatParticipantMessage.objects.create(
-            sender=part2,
-            message="test message"
-        )
-
-        response = view(request, user_id=user2.id)
-        data = response.data
-
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue('messages' in data['participants'][0])
-        self.assertTrue('messages' in data['participants'][1])
-        self.assertEqual(len(data['participants'][0]['messages']), 1)
-        self.assertEqual(len(data['participants'][1]['messages']), 1)
-        self.assertEqual(data['participants'][0]['messages'][0]['message'], 'test message')
-        self.assertEqual(data['participants'][1]['messages'][0]['message'], 'test message')
 
         # attempt to chat with oneself
         request = factory.get(
@@ -915,7 +890,97 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertTrue(user_participant.chat_deleted)
         self.assertIsNotNone(user_participant.last_deleted_at)
 
-    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    def test_get_chat_messages(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testadmin').first()
+        if not user2:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_chat_messages'})
+
+        # Create a chat
+        chat = UserChat.objects.create()
+        part1 = UserChatParticipant.objects.create( 
+            chat=chat,
+            user=user
+        )
+        UserChatParticipant.objects.create(
+            chat=chat,
+            user=user2
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/chats/{user2.id}/messages/'
+        )
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('previous' in response.data)
+        self.assertTrue('next' in response.data)
+        self.assertTrue('results' in response.data)
+        self.assertEqual(len(response.data['results']), 0)
+
+        # Create 26 messages
+        for i in range(26):
+            UserChatParticipantMessage.objects.create(
+                sender=part1,
+                message=f'test message {i}'
+            )
+
+        response = view(request, user_id=user2.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('previous' in data)
+        self.assertIsNone(data['previous'])
+        self.assertTrue('next' in data)
+        self.assertIsNotNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 25)
+
+        for i in range(1, len(data['results'])):
+            datetime_0 = datetime.strptime(data['results'][i-1]['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            datetime_1 = datetime.strptime(data['results'][i]['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            self.assertTrue(datetime_0 < datetime_1)
+
+
+        next_url = data['next']
+
+        # Create 4 more messages
+        for i in range(4):
+            UserChatParticipantMessage.objects.create(
+                sender=part1,
+                message=f'test message {i}'
+            )
+
+        request = factory.get(next_url)
+        force_authenticate(request, user=user)
+        response = view(request, user_id=user2.id)
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('previous' in data)
+        self.assertIsNotNone(data['previous'])
+        self.assertTrue('next' in data)
+        self.assertIsNone(data['next'])
+
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 1)
+
+        message = data['results'][0]
+        self.assertEqual(message['message'], 'test message 0')
+
+    @patch('users.tasks.broadcast_chat_updates_for_new_message_to_all_parties.delay')
     def test_post_chat_message(self, mocked):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -934,7 +999,7 @@ class UserAPIEndpointTestCase(APITestCase):
             chat=chat,
             user=user
         )
-        part2 = UserChatParticipant.objects.create(
+        UserChatParticipant.objects.create(
             chat=chat,
             user=user2
         )
@@ -955,7 +1020,6 @@ class UserAPIEndpointTestCase(APITestCase):
 
         message = UserChatParticipantMessage.objects.filter(sender=part1).first()
         self.assertEqual(message.message, 'test message')
-
 
     @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
     def test_mark_chat_messages_as_read(self, mocked):
@@ -1007,8 +1071,8 @@ class UserAPIEndpointTestCase(APITestCase):
         part1.refresh_from_db()
         part2.refresh_from_db()
 
-        self.assertEqual(part1_last_read_at, part1.last_read_at)
-        self.assertNotEqual(part2.last_read_at, part2_last_read_at)
+        self.assertNotEqual(part1_last_read_at, part1.last_read_at)
+        self.assertEqual(part2.last_read_at, part2_last_read_at)
 
     
     def test_block_chat(self):
@@ -1110,7 +1174,7 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertTrue(part1.chat_blocked)
         self.assertFalse(part2.chat_blocked)
         part1_last_blocked_at = part1.last_blocked_at
-        part2_last_read_at = part2.last_read_at
+        part1_last_read_at = part1.last_read_at
 
         response = view(request, pk=user2.id)
         part1.refresh_from_db()
@@ -1121,23 +1185,21 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse(part2.chat_blocked)
         self.assertFalse(part2.chat_deleted)
         self.assertNotEqual(part1_last_blocked_at, part1.last_blocked_at) 
-        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
+        self.assertNotEqual(part1_last_read_at, part1.last_read_at)
         
-        part2_last_read_at = part2.last_read_at
         part1_last_deleted_at = part1.last_deleted_at
+        part1_last_read_at = part1.last_read_at
 
         # delete and re-enable the chat
-        UserChatService.delete_chat(request, user2.id)
+        UserChatService.delete_chat(request.user, user2.id)
         part1.refresh_from_db()
         part2.refresh_from_db()
 
         self.assertTrue(part1.chat_deleted)
-        self.assertNotEqual(part1_last_deleted_at, part1.last_deleted_at)
         self.assertFalse(part2.chat_deleted)
-        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
 
-        part2_last_read_at = part2.last_read_at
         part1_last_deleted_at = part1.last_deleted_at
+        part1_last_read_at = part1.last_read_at
 
         response = view(request, pk=user2.id)
         part1.refresh_from_db()
@@ -1148,8 +1210,7 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse(part2.chat_deleted)
         self.assertFalse(part2.chat_blocked)
         self.assertNotEqual(part1_last_deleted_at, part1.last_deleted_at)
-        self.assertNotEqual(part2_last_read_at, part2.last_read_at)
-
+        self.assertNotEqual(part1_last_read_at, part1.last_read_at)
 
     def test_post_like(self):
         user = User.objects.filter(username='testuser').first()
@@ -1348,8 +1409,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(len(data['results']), 1)
         self.assertEqual(data['results'][0]['title'], 'test title')
         self.assertFalse('messages' in data['results'][0])
-        self.assertFalse('unread_messages_count' in data['results'][0])
-        self.assertFalse('user_data' in data['results'][0])
+        self.assertTrue('unread_messages_count' in data['results'][0])
+        self.assertTrue('user_data' in data['results'][0])
         self.assertTrue('last_message' in data['results'][0])
         self.assertTrue('inquiry_type_data' in data['results'][0])
         self.assertTrue('moderators' in data['results'][0])
@@ -1381,6 +1442,10 @@ class UserAPIEndpointTestCase(APITestCase):
                 inquiry_moderator=moderator,
                 message='test message'
             )
+            InquiryModeratorMessage.objects.create(
+                inquiry_moderator=moderator,
+                message='test message'
+            )
 
         response = view(request)
         data = response.data
@@ -1393,22 +1458,25 @@ class UserAPIEndpointTestCase(APITestCase):
 
         for inquiry in data['results']:
             self.assertEqual(inquiry['title'], 'test title')
-            self.assertFalse('messages' in inquiry)
-            self.assertFalse('unread_messages_count' in inquiry)
-            self.assertFalse('user_data' in inquiry)
+            self.assertTrue('unread_messages_count' in inquiry)
+            self.assertTrue('user_data' in inquiry)
             self.assertTrue('last_message' in inquiry)
             self.assertTrue('inquiry_type_data' in inquiry)
             self.assertTrue('moderators' in inquiry)
             self.assertTrue('moderator_data' in inquiry['moderators'][0])
             self.assertTrue('last_message' in inquiry['moderators'][0])
-            self.assertTrue('unread_messages_count' in inquiry['moderators'][0])
+            self.assertFalse('unread_messages_count' in inquiry['moderators'][0])
+
+            self.assertTrue('id' in inquiry['user_data'])
+            self.assertTrue('username' in inquiry['user_data'])
+            self.assertTrue('favorite_team' in inquiry['user_data'])
+            self.assertEqual(inquiry['unread_messages_count'], 2)
             self.assertEqual(inquiry['last_message']['message'], 'test message')
             self.assertEqual(inquiry['inquiry_type_data']['name'], inquiry_type.name) 
             self.assertEqual(len(inquiry['moderators']), 1)
             self.assertEqual(inquiry['moderators'][0]['moderator_data']['username'], admin.username)
             self.assertEqual(inquiry['moderators'][0]['last_message']['message'], 'test message')
-            self.assertEqual(inquiry['moderators'][0]['unread_messages_count'], 1)
-    
+
     def test_get_inquiry(self):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -1460,23 +1528,113 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertFalse('user_data' in data)
         self.assertFalse('last_message' in data)
         self.assertFalse('unread_messages_count' in data)
-        self.assertTrue('messages' in data)
         self.assertTrue('inquiry_type_data' in data)
         self.assertTrue('moderators' in data)
         self.assertEqual(data['inquiry_type_data']['name'], inquiry_type.name)
         self.assertEqual(len(data['moderators']), 1)
-        self.assertEqual(len(data['messages']), 1)
-        self.assertEqual(data['messages'][0]['message'], 'test message')
         self.assertFalse('last_message' in data['moderators'][0])
         self.assertFalse('unread_messages_count' in data['moderators'][0])
         self.assertFalse('inquiry_data' in data['moderators'][0])
-        self.assertTrue('messages' in data['moderators'][0])
         self.assertTrue('moderator_data' in data['moderators'][0])
         self.assertEqual(data['moderators'][0]['moderator_data']['username'], admin.username)
-        self.assertEqual(len(data['moderators'][0]['messages']), 1)
-        self.assertEqual(data['moderators'][0]['messages'][0]['message'], 'test message')
 
-    def test_mark_inquiry_messages_as_read(self):
+    def test_get_inquiry_messages(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        admin = User.objects.filter(username='testadmin').first()
+        if not admin:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_inquiry_messages'})
+
+        # Create an inquiry
+        inquiry_type = InquiryType.objects.all().first()
+        inquiry = Inquiry.objects.create(
+            user=user,
+            inquiry_type=inquiry_type,
+            title='test title',
+        )
+        InquiryMessage.objects.create(
+            inquiry=inquiry,
+            message='test message',
+        )
+
+        moderator = InquiryModerator.objects.create(
+            inquiry=inquiry,
+            moderator=admin
+        )
+        InquiryModeratorMessage.objects.create(
+            inquiry_moderator=moderator,
+            message='test message'
+        )
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/inquiries/{inquiry.id}/messages/'
+        )
+        response = view(request, inquiry_id=inquiry.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('next' in data)
+        self.assertIsNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 2)
+        self.assertEqual(data['results'][0]['message'], 'test message')
+        self.assertEqual(data['results'][1]['message'], 'test message')
+
+        # Create 26 messages
+        for i in range(26):
+            InquiryMessage.objects.create(
+                inquiry=inquiry,
+                message=f'test message {i}'
+            )
+
+        response = view(request, inquiry_id=inquiry.id)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse('previous' in data)
+        self.assertTrue('next' in data)
+        self.assertIsNotNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 25)
+
+        last_datetime = data['results'][0]['created_at']
+        for i in range(1, len(data['results'])):
+            current_datetime = data['results'][i]['created_at']
+            self.assertTrue(datetime.strptime(last_datetime, '%Y-%m-%dT%H:%M:%S.%fZ') < datetime.strptime(current_datetime, '%Y-%m-%dT%H:%M:%S.%fZ'))
+        
+        next_url = data['next']
+        
+        request = factory.get(next_url)
+        force_authenticate(request, user=user)
+        response = view(request, inquiry_id=inquiry.id)
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse('previous' in data)
+        self.assertTrue('next' in data)
+        self.assertIsNone(data['next'])
+        self.assertTrue('results' in data)
+        self.assertEqual(len(data['results']), 3)
+
+        last_datetime = data['results'][0]['created_at']
+        for i in range(1, len(data['results'])):
+            current_datetime = data['results'][i]['created_at']
+            self.assertTrue(datetime.strptime(last_datetime, '%Y-%m-%dT%H:%M:%S.%fZ') < datetime.strptime(current_datetime, '%Y-%m-%dT%H:%M:%S.%fZ'))
+
+    @patch('users.tasks.broadcast_inquiry_updates_to_all_parties.delay')
+    def test_mark_inquiry_messages_as_read(self, mocked):
         user = User.objects.filter(username='testuser').first()
         if not user:
             self.fail("User not found")
@@ -1534,7 +1692,7 @@ class UserAPIEndpointTestCase(APITestCase):
         response = view(request, inquiry_id=random_uuid)
         self.assertEqual(response.status_code, 404)
     
-    @patch('requests.post', return_value=MockResponse(200, {'result': 'ok'}))
+    @patch('users.tasks.broadcast_inquiry_updates_for_new_message_to_all_parties.delay')
     def test_post_inquiry_message(self, mocked):
         user = User.objects.filter(username='testuser').first()
         if not user:
@@ -1654,6 +1812,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['count'], 1)
         self.assertEqual(len(data['results']), 1)
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
 
         notification = data['results'][0]
 
@@ -1720,6 +1880,21 @@ class UserAPIEndpointTestCase(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['count'], 11)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'])
+        self.assertFalse(data['previous'])
+
+        # test with a query parameter "context"
+        request = factory.get(
+            f'/api/users/me/notifications/?context=header'
+        )
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 11)
         self.assertEqual(len(data['results']), 3)
         self.assertTrue(data['next'])
         self.assertFalse(data['previous'])
@@ -1779,6 +1954,43 @@ class UserAPIEndpointTestCase(APITestCase):
         response = view(request)
         self.assertEqual(response.status_code, 200)
         
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+        force_authenticate(request, user=user)
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+
+        ## re-mark notifications as not deleted
+        NotificationRecipient.objects.filter(
+            recipient=user
+        ).update(
+            deleted=False
+        )
+
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1) 
+
+        ## Randomly mark some notifications as deleted
+        notifications = Notification.objects.filter(
+            notificationrecipient__recipient=user
+        )[:3]
+
+        ids = [str(notification.id) for notification in notifications]
+        request = factory.delete(
+            f'/api/users/me/notifications/',
+            data=ids,
+            format='json'
+        )
+        view = UserViewSet.as_view({'delete': 'delete_notifications'})
+        force_authenticate(request, user=user)
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+
         request = factory.get(
             f'/api/users/me/notifications/'
         )
@@ -1856,8 +2068,8 @@ class UserAPIEndpointTestCase(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(data['count'], 10)
-        self.assertEqual(len(data['results']), 3)
-        self.assertTrue(data['next'])
+        self.assertEqual(len(data['results']), 10)
+        self.assertFalse(data['next'])
         self.assertFalse(data['previous'])
 
         for notification in data['results']:
@@ -1875,6 +2087,76 @@ class UserAPIEndpointTestCase(APITestCase):
             self.assertEqual(len(notification['contents']), 2)
             self.assertEqual(notification['picture_url'], None)
 
+        ## Re-mark notifications as not read
+        NotificationRecipient.objects.filter(
+            recipient=user
+        ).update(
+            read=False
+        )
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 10)
+        self.assertEqual(len(data['results']), 10)
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        for notification in data['results']:
+            self.assertTrue('id' in notification)
+            self.assertTrue('created_at' in notification)
+            self.assertTrue('updated_at' in notification)
+            self.assertTrue('picture_url' in notification)
+            self.assertTrue('redirect_url' in notification)
+            self.assertTrue('recipients' in notification)
+            self.assertTrue('contents' in notification)
+
+            self.assertEqual(len(notification['recipients']), 1)
+            self.assertEqual(notification['recipients'][0]['recipient_data']['username'], user.username)
+            self.assertEqual(notification['recipients'][0]['read'], False)
+            self.assertEqual(len(notification['contents']), 2)
+            self.assertEqual(notification['picture_url'], None)
+
+        ## Randomly mark two notifications as read
+        notifications = Notification.objects.filter(
+            notificationrecipient__recipient=user
+        )[:2]
+        ids = [str(notification.id) for notification in notifications]
+
+        request = factory.patch(
+            f'/api/users/me/notifications/',
+            data=ids,
+            format='json'
+        )
+        force_authenticate(request, user=user)
+        view = UserViewSet.as_view({'patch': 'mark_notifications_as_read'})
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        
+        read_count = 0
+
+        request = factory.get(
+            f'/api/users/me/notifications/'
+        )
+        view = UserViewSet.as_view({'get': 'get_notifications'})
+        force_authenticate(request, user=user)
+
+        response = view(request)
+        data = response.data
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['count'], 10)
+        self.assertEqual(len(data['results']), 10)
+        self.assertFalse(data['next'])
+        self.assertFalse(data['previous'])
+
+        for notification in data['results']:
+            if notification['recipients'][0]['read']:
+                read_count += 1
+
+        self.assertEqual(read_count, 2)
 
 class JWTViewSetTestCase(APITestCase):
     def setUp(self):

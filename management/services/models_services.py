@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Union
+import uuid
+from api.exceptions import BadRequestError
 from management.models import (
     Inquiry, 
     InquiryMessage, 
@@ -12,24 +14,48 @@ from management.models import (
     ReportTypeDisplayName
 )
 
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, Count, OuterRef, F, Subquery, Value
 from django.db.models.manager import BaseManager
+from django.db.models.fields import CharField, DateTimeField, IntegerField
+from django.db.models.expressions import Window
+from django.db.models.functions import RowNumber
 
 from rest_framework.status import HTTP_404_NOT_FOUND, HTTP_400_BAD_REQUEST
+from rest_framework.request import Request
 
 from teams.models import (
     Post, 
     PostComment, 
-    PostCommentLike, 
-    PostCommentReply, 
     PostLike, 
     PostStatusDisplayName, 
     Team, 
-    TeamLike
+    TeamLike,
+    TeamName
 )
 from users.models import User, UserChat, UserChatParticipant, UserLike
-from users.services import create_user_queryset_without_prefetch
+from users.services.models_services import create_user_queryset_without_prefetch
 
+from django_cte import With
+
+def test_django_cte():
+    item = Inquiry.objects.annotate(
+        row_number=Window(
+            expression=RowNumber(),
+            partition_by=[F('user_id')],
+            order_by=F('created_at').desc()
+        ),
+        last_message=Subquery(
+            InquiryMessage.objects.annotate(
+                row_number=Window(
+                    expression=RowNumber(),
+                    partition_by=[F('inquiry_id')],
+                    order_by=F('created_at').desc()
+                )
+            ).filter(row_number=1).values('message')[:1]
+        ),
+    ).filter(row_number=1).values('id', 'user_id', 'created_at', 'last_message')
+
+    print(item.query)
 
 post_queryset_allowed_order_by_fields = (
     'title',
@@ -71,7 +97,50 @@ report_queryset_allowed_order_by_fields = (
     '-title',
 )
 
-def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(request, **kwargs) -> BaseManager[Inquiry]:
+def _filter_and_fetch_inquiries_with_request(request, **kwargs) -> BaseManager[Inquiry]:
+    """
+    Filter and fetch inquiries in descending order based on the updated_at field and the request query parameters.
+
+    Args:
+        - request: request object.
+        - **kwargs: keyword arguments to filter
+
+    Returns:
+        - BaseManager[Inquiry]: queryset of inquiries
+    """
+    latest_message_subquery = InquiryMessage.objects.filter(
+        inquiry=OuterRef('id')
+    ).order_by('-created_at').values('message')[:1]
+
+    latest_message_created_at_subquery = InquiryMessage.objects.filter(
+        inquiry=OuterRef('id')
+    ).order_by('-created_at').values('created_at')[:1]
+
+    latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+        inquiry_moderator__moderator=OuterRef('moderator')
+    ).order_by('-created_at').values('message')[:1]
+
+    latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+        inquiry_moderator__moderator=OuterRef('moderator')
+    ).order_by('-created_at').values('created_at')[:1]
+
+    unread_other_moderator_messages_count_subquery = InquiryModeratorMessage.objects.filter(
+        ~Q(inquiry_moderator__moderator=OuterRef('moderator')),
+        created_at__gt=OuterRef('last_read_at')
+    ).values('inquiry_moderator').annotate(count=Count('id')).values('count')
+
+    unread_messages_count_subquery = InquiryMessage.objects.filter(
+        inquiry__id=OuterRef('inquiry__id'),
+        created_at__gt=OuterRef('last_read_at')
+    ).values('inquiry').annotate(count=Count('id')).values('count')
+
+    user_teamlike_queryset = TeamLike.objects.select_related('team').prefetch_related(
+        Prefetch(
+            'team__teamname_set',
+            queryset=TeamName.objects.select_related('language')
+        )
+    )
+    
     queryset = Inquiry.objects.select_related(
         'inquiry_type',
         'user'
@@ -83,20 +152,32 @@ def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(request, **kwar
             )
         ),
         Prefetch(
-            'messages',
-            queryset=InquiryMessage.objects.order_by('-created_at')
-        ),
-        Prefetch(
             'inquirymoderator_set',
             queryset=InquiryModerator.objects.select_related(
+                'inquiry',
                 'moderator'
+            ).annotate(
+                last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
+                unread_other_moderators_messages_count=Subquery(unread_other_moderator_messages_count_subquery, output_field=IntegerField()),
+                unread_messages_count=Subquery(unread_messages_count_subquery, output_field=IntegerField())
+            ).filter(
+                in_charge=True
             ).prefetch_related(
                 Prefetch(
-                    'inquirymoderatormessage_set',
-                    queryset=InquiryModeratorMessage.objects.order_by('-created_at')
+                    'moderator__teamlike_set',
+                    queryset=user_teamlike_queryset
                 )
             )
         )
+    ).prefetch_related(
+        Prefetch(
+            'user__teamlike_set',
+            queryset=user_teamlike_queryset
+        )
+    ).annotate(
+        last_message=Subquery(latest_message_subquery, output_field=CharField()),
+        last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
     ).order_by('-updated_at')
 
     search_term = request.query_params.get('search', None)
@@ -111,9 +192,57 @@ def filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(request, **kwar
     
     return queryset
 
-
 def filter_and_fetch_inquiry(**kwargs) -> Inquiry | None:
-    queryset = Inquiry.objects.select_related(
+    """
+    Filter and fetch an inquiry based on the keyword arguments.
+
+    Args:
+        - **kwargs: keyword arguments to filter
+    
+    Returns:
+        - Inquiry | None: inquiry or None
+    """
+    latest_message_subquery = InquiryMessage.objects.filter(
+        inquiry=OuterRef('id')
+    ).order_by('-created_at').values('message')[:1]
+
+    latest_message_created_at_subquery = InquiryMessage.objects.filter(
+        inquiry=OuterRef('id')
+    ).order_by('-created_at').values('created_at')[:1]
+
+    unread_moderator_messages_count_subquery = Count(
+        'inquirymoderator__inquirymoderatormessage',
+        filter=Q(inquirymoderator__inquirymoderatormessage__created_at__gt=F('last_read_at'))
+    )
+
+    unread_other_moderator_messages_count_subquery = InquiryModeratorMessage.objects.filter(
+        ~Q(inquiry_moderator__moderator=OuterRef('moderator')),
+        created_at__gt=OuterRef('last_read_at')
+    ).values('inquiry_moderator').annotate(count=Count('id')).values('count')
+
+    latest_moderator_message_subquery = InquiryModeratorMessage.objects.filter(
+        inquiry_moderator__moderator=OuterRef('moderator'),
+        inquiry_moderator__inquiry=OuterRef('inquiry__id')
+    ).order_by('-created_at').values('message')[:1]
+
+    latest_moderator_message_created_at_subquery = InquiryModeratorMessage.objects.filter(
+        inquiry_moderator__moderator=OuterRef('moderator'),
+        inquiry_moderator__inquiry=OuterRef('inquiry__id')
+    ).order_by('-created_at').values('created_at')[:1]
+
+    unread_messages_count_subquery = InquiryMessage.objects.filter(
+        inquiry__id=OuterRef('inquiry__id'),
+        created_at__gt=OuterRef('last_read_at')
+    ).values('inquiry').annotate(count=Count('id')).values('count')
+
+    user_teamlike_queryset = TeamLike.objects.select_related('team').prefetch_related(
+        Prefetch(
+            'team__teamname_set',
+            queryset=TeamName.objects.select_related('language')
+        )
+    )
+
+    inquiry = Inquiry.objects.select_related(
         'inquiry_type',
         'user'
     ).prefetch_related(
@@ -124,26 +253,39 @@ def filter_and_fetch_inquiry(**kwargs) -> Inquiry | None:
             )
         ),
         Prefetch(
-            'messages',
-            queryset=InquiryMessage.objects.order_by('-created_at')
-        ),
-        Prefetch(
             'inquirymoderator_set',
             queryset=InquiryModerator.objects.select_related(
+                'inquiry',
                 'moderator'
+            ).annotate(
+                last_message=Subquery(latest_moderator_message_subquery, output_field=CharField()),
+                last_message_created_at=Subquery(latest_moderator_message_created_at_subquery, output_field=DateTimeField()),
+                unread_messages_count=unread_messages_count_subquery,
+                unread_other_moderators_messages_count=Subquery(unread_other_moderator_messages_count_subquery, output_field=IntegerField())
+            ).filter(
+                in_charge=True
             ).prefetch_related(
                 Prefetch(
-                    'inquirymoderatormessage_set',
-                    queryset=InquiryModeratorMessage.objects.order_by('-created_at')
+                    'moderator__teamlike_set',
+                    queryset=user_teamlike_queryset
                 )
             )
         )
+    ).prefetch_related(
+        Prefetch(
+            'user__teamlike_set',
+            queryset=user_teamlike_queryset
+        )
+    ).annotate(
+        last_message=Subquery(latest_message_subquery, output_field=CharField()),
+        last_message_created_at=Subquery(latest_message_created_at_subquery, output_field=DateTimeField()),
+        unread_messages_count=unread_moderator_messages_count_subquery
     )
 
     if kwargs:
-        return queryset.filter(**kwargs).first()
+        return inquiry.filter(**kwargs).first()
     
-    return queryset.first()
+    return inquiry.first()
 
 def create_post_queryset_without_prefetch(
     request, 
@@ -186,8 +328,15 @@ def create_post_queryset_without_prefetch(
 
     status_filter : str | None = request.query_params.get('status', None)
     if status_filter is not None:
-        status_filter = status_filter.split(',')
-        queryset = queryset.filter(status__id__in=status_filter)
+        unfiltered_status_filter = status_filter.split(',')
+        status_filter = []
+
+        for status in unfiltered_status_filter:
+            if status.isdigit():
+                status_filter.append(int(status))
+        
+        if status_filter:
+            queryset = queryset.filter(status__id__in=status_filter)
 
     if sort_by is not None:
         queryset = queryset.order_by(*sort_by)
@@ -240,8 +389,15 @@ def create_post_comment_queryset_without_prefetch(
 
     status_filter : str | None = request.query_params.get('status', None)
     if status_filter is not None:
-        status_filter = status_filter.split(',')
-        queryset = queryset.filter(status__id__in=status_filter)
+        unfiltered_status_filter = status_filter.split(',')
+        status_filter = []
+
+        for status in unfiltered_status_filter:
+            if status.isdigit():
+                status_filter.append(int(status))
+        
+        if status_filter:
+            queryset = queryset.filter(status__id__in=status_filter)
 
     if sort_by is not None:
         queryset = queryset.order_by(*sort_by)
@@ -362,6 +518,10 @@ class InquiryService:
         return filter_and_fetch_inquiry(id=pk)
     
     @staticmethod
+    def check_inquiry_exists(pk):
+        return Inquiry.objects.filter(id=pk).exists()
+    
+    @staticmethod
     def get_inquiry_without_messages(pk):
         return Inquiry.objects.filter(id=pk).select_related(
             'inquiry_type',
@@ -385,14 +545,89 @@ class InquiryService:
                 )
             )
         )
+
+    @staticmethod
+    def get_inquiry_message(
+        inquiry_message_id: str | uuid.UUID
+    ) -> Union[InquiryMessage, None]:
+        """
+        Retrieve an inquiry message by its id.
+
+        Args:
+            - inquiry_message_id: id of the inquiry message.
+        
+        Returns:
+            - Union[InquiryMessage, None]: inquiry message or None.
+        """
+        if not inquiry_message_id:
+            raise BadRequestError('Invalid inquiry message id.')
+        
+        if not isinstance(inquiry_message_id, str) and not isinstance(inquiry_message_id, uuid.UUID):
+            raise BadRequestError('inquiry_message_id must be a string.')
+        
+        return InquiryMessage.objects.filter(
+            id=inquiry_message_id
+        ).order_by('-created_at').select_related(
+            'inquiry__user'
+        ).annotate(
+            user_type=Value('User', output_field=CharField()),
+            user_id=F('inquiry__user__id'),
+            user_username=F('inquiry__user__username')
+        ).values(
+            'id',
+            'message',
+            'created_at',
+            'updated_at',
+            'user_type',
+            'user_id',
+            'user_username'
+        ).first()
+
     
 class InquiryModeratorService:
     @staticmethod
-    def get_inquiries_based_on_recent_updated_at(request):
-        return filter_and_fetch_inquiries_in_desc_order_based_on_updated_at(request)
+    def get_inquiries_with_request(request: Request, **kwargs: dict) -> BaseManager[Inquiry]:
+        """
+        Retrieve inquiries with the request query parameters and the keyword arguments.
+
+        Args:
+            - request: request object.
+            - **kwargs: keyword arguments to filter
+
+        Returns:
+            - BaseManager[Inquiry]: queryset of inquiries
+        """
+        return _filter_and_fetch_inquiries_with_request(request, **kwargs)
     
     @staticmethod
-    def assign_moderator(request, inquiry):
+    def check_inquiry_moderator_exists(inquiry_id: str, moderator: User) -> bool:
+        """
+        Check if an inquiry moderator exists.
+
+        Args:
+            - inquiry_id: id of the inquiry.
+            - moderator: User object.
+        
+        Returns:
+            - bool: True if the inquiry moderator exists, False otherwise.
+        """
+        return InquiryModerator.objects.filter(
+            inquiry__id=inquiry_id,
+            moderator=moderator
+        ).exists()
+    
+    @staticmethod
+    def assign_moderator(request: Request, inquiry: Inquiry) -> None:
+        """
+        Assign a moderator to an inquiry.
+
+        Args:
+            - request: request object.
+            - inquiry: inquiry object.
+
+        Returns:
+            - None
+        """
         _, created = InquiryModerator.objects.get_or_create(
             inquiry=inquiry,
             moderator=request.user
@@ -407,12 +642,93 @@ class InquiryModeratorService:
         inquiry.save()
 
     @staticmethod
-    def unassign_moderator(request, inquiry):
+    def unassign_moderator(request: Request, inquiry: Inquiry) -> None:
+        """
+        Unassign a moderator from an inquiry.
+
+        Args:
+            - request: request object.
+            - inquiry: inquiry object.
+
+        Returns:
+            - None
+        """
         InquiryModerator.objects.filter(
             inquiry=inquiry,
             moderator=request.user
         ).update(in_charge=False)
         inquiry.save()
+
+    @staticmethod
+    def mark_inquiry_as_read(inquiry_id: str, moderator: User) -> None:
+        """
+        Mark an inquiry as read by a moderator.
+
+        Args:
+            - inquiry_id: id of the inquiry.
+            - moderator: User object.
+
+        Returns:
+            - None
+        """
+        InquiryModerator.objects.filter(
+            inquiry__id=inquiry_id,
+            moderator=moderator
+        ).update(last_read_at=datetime.now(timezone.utc))
+
+    @staticmethod
+    def update_updated_at(inquiry_id: str) -> None:
+        """
+        Update the updated_at field of an inquiry.
+
+        Args:
+            - inquiry_id: id of the inquiry.
+        
+        Returns:
+            - None
+        """
+        inquiry = Inquiry.objects.get(id=inquiry_id)
+        inquiry.save()
+
+    @staticmethod
+    def get_inquiry_moderator_message(
+        inquiry_moderator_message_id: str | uuid.UUID
+    ) -> Union[InquiryModeratorMessage, None]:
+        """
+        Retrieve an inquiry moderator message by its id.
+
+        Args:
+            - inquiry_moderator_message_id: id of the inquiry moderator message.
+        
+        Returns:
+            - Union[InquiryModeratorMessage, None]: inquiry moderator message or None.
+        """
+        if not inquiry_moderator_message_id:
+            raise BadRequestError('Invalid inquiry moderator message id.')
+        
+        if not isinstance(inquiry_moderator_message_id, str) and not isinstance(inquiry_moderator_message_id, uuid.UUID):
+            raise BadRequestError('inquiry_moderator_message_id must be a string.')
+        
+        return InquiryModeratorMessage.objects.filter(
+            id=inquiry_moderator_message_id
+        ).select_related(
+            'inquiry_moderator__moderator'
+        ).prefetch_related(
+            Prefetch(
+                'inquiry_moderator__moderator__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=TeamName.objects.select_related('language')
+                    )
+                )
+            )
+        ).annotate(
+            user_type=Value('Moderator', output_field=CharField()),
+            user_id=F('inquiry_moderator__moderator__id'),
+            user_username=F('inquiry_moderator__moderator__username')
+        ).first()
+
 
 class ReportService:
     @staticmethod
@@ -609,20 +925,14 @@ class UserManagementService:
                 'post__user__username'
             ],
             user__id=pk
-        ).prefetch_related(
-            Prefetch(
-                'postcommentlike_set',
-                queryset=PostCommentLike.objects.all()
-            ),
-            Prefetch(
-                'postcommentreply_set',
-                queryset=PostCommentReply.objects.all()
-            ),
         ).select_related(
             'user',
             'status',
             'post__team',
             'post__user'
+        ).annotate(
+            likes_count=Count('postcommentlike'),
+            replies_count=Count('postcommentreply')
         )
     
     @staticmethod
