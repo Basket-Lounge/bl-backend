@@ -50,6 +50,8 @@ class TeamViewSet(viewsets.ViewSet):
             permission_classes = [IsAuthenticated]
         elif self.action == 'delete_team_post':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'hide_post':
+            permission_classes = [IsAuthenticated]
         elif self.action == 'like_post':
             permission_classes = [IsAuthenticated]
         elif self.action == 'unlike_post':
@@ -166,6 +168,10 @@ class TeamViewSet(viewsets.ViewSet):
     @method_decorator(cache_page(60*1)) 
     @action(detail=True, methods=['get'], url_path='last-4-games')
     def get_last_4_games(self, request, pk=None):
+        team_exists = TeamService.check_team_exists(pk)
+        if not team_exists:
+            return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
+
         data = TeamService.get_and_serialize_team_last_n_games(pk, 4)
         return Response(data)
 
@@ -228,7 +234,7 @@ class TeamViewSet(viewsets.ViewSet):
         except Team.DoesNotExist:
             return Response({'error': 'Team not found'}, status=HTTP_404_NOT_FOUND)
         
-        posts = PostService.get_team_posts(request, pk)
+        posts = PostService.get_team_posts_with_request(request, pk)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(posts, request)
@@ -356,6 +362,32 @@ class TeamViewSet(viewsets.ViewSet):
         post = PostService.get_post_after_creating_like(request, pk, post_id)
         serializer = PostSerializerService.serialize_post_after_like(request, post)
         return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/hidden'
+    )
+    def hide_or_unhide_post(self, request, pk=None, post_id=None):
+        try:
+            Post.objects.get(team__id=pk, id=post_id)
+        except Post.DoesNotExist:
+            return Response({'error': 'Post not found'}, status=HTTP_404_NOT_FOUND)
+
+        is_post_hidden = PostService.check_if_post_hidden(post_id, request.user)
+        if is_post_hidden:
+            PostService.unhide_post(post_id, request.user)
+            message = 'Post unhidden successfully!'
+        else:
+            PostService.hide_post(post_id, request.user)
+            message = 'Post hidden successfully!'
+
+        print(message)
+
+        return Response(
+            {'message': message},
+            status=HTTP_200_OK
+        )
 
     @action(
         detail=True,
@@ -538,7 +570,7 @@ class TeamViewSet(viewsets.ViewSet):
     @reply_comment.mapping.get
     def get_replies(self, request, pk=None, post_id=None, comment_id=None):
         try:
-            comment = PostComment.objects.get(
+            PostComment.objects.get(
                 post__id=post_id, 
                 id=comment_id, 
                 post__team__id=pk

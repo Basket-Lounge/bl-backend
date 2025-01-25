@@ -4,6 +4,7 @@ from typing import List
 
 from django.db import transaction
 from django.db.models import Q, Prefetch, Count, Exists, OuterRef
+from django.db.models.manager import BaseManager
 
 from nba_api.stats.endpoints.franchisehistory import FranchiseHistory
 from nba_api.stats.endpoints.leaguestandingsv3 import LeagueStandingsV3
@@ -28,8 +29,10 @@ from teams.models import (
     PostComment, 
     PostCommentLike, 
     PostCommentReply,
+    PostCommentReplyStatusDisplayName,
     PostCommentStatus,
-    PostCommentStatusDisplayName, 
+    PostCommentStatusDisplayName,
+    PostHide, 
     PostLike,
     PostStatus, 
     PostStatusDisplayName, 
@@ -39,6 +42,7 @@ from teams.models import (
 )
 from teams.serializers import PostCommentStatusSerializer, PostStatusSerializer, TeamSerializer
 from teams.utils import calculate_time
+from users.models import User
 from users.serializers import (
     PostCommentCreateSerializer, 
     PostCommentReplyCreateSerializer, 
@@ -49,6 +53,8 @@ from users.serializers import (
     PostUpdateSerializer
 )
 from users.services.models_services import create_post_queryset_without_prefetch_for_user
+
+from rest_framework.request import Request
 
 
 comment_queryset_allowed_order_by_fields = [
@@ -265,7 +271,7 @@ def get_team_season_stats(year, team_id):
     
     return ranking
 
-def get_player_last_n_games_log(player_id, n=5):
+def _get_player_last_n_games_log(player_id, n=5):
     stats = PlayerStatistics.objects.filter(
         player__id=player_id
     ).select_related(
@@ -278,7 +284,7 @@ def get_player_last_n_games_log(player_id, n=5):
 
     return stats
 
-def get_last_n_games_log(team_id, n=5):
+def _get_last_n_games_log(team_id, n=5):
     if n < 1 or n > 82:
         raise ValueError('Invalid n value. n should be between 1 and 82')
 
@@ -587,6 +593,19 @@ def create_comment_queryset_without_prefetch_for_post(
 
 class TeamService:
     @staticmethod
+    def check_team_exists(team_id: int) -> bool:
+        """
+        Check if a team exists in the database.
+
+        Args:
+            - team_id (int): The id of the team to check.
+
+        Returns:
+            - bool: True if the team exists, False otherwise
+        """
+        return Team.objects.filter(id=team_id).exists()
+
+    @staticmethod
     def get_team(request, pk):
         team = Team.objects.prefetch_related(
             Prefetch(
@@ -625,7 +644,7 @@ class TeamService:
     
     @staticmethod
     def get_and_serialize_team_last_n_games(team_id, n=5):
-        games_data, linescores_data = get_last_n_games_log(team_id, n)
+        games_data, linescores_data = _get_last_n_games_log(team_id, n)
         return combine_games_and_linescores(games_data, linescores_data)
     
     @staticmethod
@@ -828,7 +847,7 @@ class TeamPlayerService:
         ).first()
     
     def get_team_player_last_n_games_log(player_id, n=5):
-        return get_player_last_n_games_log(player_id, n)
+        return _get_player_last_n_games_log(player_id, n)
     
 class TeamPlayerSerializerService:
     def serialize_players(players):
@@ -942,7 +961,70 @@ class PostService:
         return True, None
     
     @staticmethod
-    def get_team_posts(request, pk):
+    def check_if_post_hidden(post_id: str, user: User) -> bool:
+        """
+        This method checks if a post is hidden for a user.
+
+        Args:
+            - post_id (str): The id of the post to check.
+            - user (User): The user to check.
+
+        Returns:
+            - bool: True if the post is hidden, False otherwise.
+        """
+        return PostHide.objects.filter(
+            post__id=post_id,
+            user=user
+        ).exists()
+    
+    @staticmethod
+    def hide_post(post_id: str, user: User) -> None:
+        """
+        This method hides a post for a user.
+
+        Args:
+            - post_id (str): The id of the post to hide.
+            - user (User): The user that hides the post
+        
+        Returns:
+            - None
+        """
+        post = Post.objects.get(id=post_id)
+        PostHide.objects.get_or_create(
+            post=post,
+            user=user
+        )
+
+    @staticmethod
+    def unhide_post(post_id: str, user: User) -> None:
+        """
+        This method unhides a post for a user.
+
+        Args:
+            - post_id (str): The id of the post to unhide.
+            - user (User): The user that unhides the post
+        
+        Returns:
+            - None
+        """
+        post = Post.objects.get(id=post_id)
+        PostHide.objects.filter(
+            post=post,
+            user=user
+        ).delete()
+    
+    @staticmethod
+    def get_team_posts_with_request(request: Request, pk: str) -> BaseManager[Post]:
+        """
+        This method returns a queryset of posts for a team with the id of pk. A user must be authenticated to get the liked field in the queryset.
+
+        Args:
+            - request (Request): The request object.
+            - pk (str): The id of the team.
+
+        Returns:
+            - BaseManager[Post]: A queryset of posts for the team with the id of pk.
+        """
         teamname_queryset = TeamName.objects.select_related('language')
 
         posts = create_post_queryset_without_prefetch_for_user(
@@ -950,6 +1032,7 @@ class PostService:
             fields_only=[
                 'id', 
                 'title', 
+                'content',
                 'created_at', 
                 'updated_at', 
                 'user__id', 
@@ -959,7 +1042,7 @@ class PostService:
                 'status__id', 
                 'status__name'
             ],
-            team__id=pk
+            team__id=pk,
         ).select_related(
             'user',
             'team',
@@ -988,18 +1071,20 @@ class PostService:
                 )
             )
         ).exclude(
-            Q(status__name='deleted') | Q(status__name='hidden')
+            Q(status__name='deleted') | Q(status__name='hidden'),
         )
 
         if request.user.is_authenticated:
             posts = posts.annotate(
                 liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
+            ).exclude(posthide__user=request.user)
 
         return posts
 
     @staticmethod
     def get_post(request, pk, post_id):
+        teamname_queryset = TeamName.objects.select_related('language')
+
         post = Post.objects.select_related(
             'user',
             'team',
@@ -1009,6 +1094,19 @@ class PostService:
                 'status__poststatusdisplayname_set',
                 queryset=PostStatusDisplayName.objects.select_related(
                     'language'
+                )
+            ),
+            Prefetch(
+                'team__teamname_set',
+                queryset=teamname_queryset
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=teamname_queryset
+                    )
                 )
             )
         ).only(
@@ -1027,7 +1125,7 @@ class PostService:
             team__id=pk,
             id=post_id,
         ).exclude(
-            status__name='deleted'
+            status__name='deleted',
         ).annotate(
             likes_count=Count('postlike'),
             comments_count=Count('postcomment'),
@@ -1036,7 +1134,7 @@ class PostService:
         if request.user.is_authenticated:
             post = post.annotate(
                 liked=Exists(PostLike.objects.filter(user=request.user, post=OuterRef('pk')))
-            )
+            ).exclude(posthide__user=request.user)
 
         return post.first()
 
@@ -1080,6 +1178,22 @@ class PostService:
         ).annotate(
             likes_count=Count('postcommentlike'),
             replies_count=Count('postcommentreply')
+        ).prefetch_related(
+            Prefetch(
+                'status__postcommentstatusdisplayname_set',
+                queryset=PostCommentStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=TeamName.objects.select_related('language')
+                    )
+                )
+            )
         )
 
         if request.user.is_authenticated:
@@ -1346,6 +1460,22 @@ class PostService:
         ).select_related(
             'user',
             'status'
+        ).prefetch_related(
+            Prefetch(
+                'status__postcommentreplystatusdisplayname_set',
+                queryset=PostCommentReplyStatusDisplayName.objects.select_related(
+                    'language'
+                )
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=TeamName.objects.select_related('language')
+                    )
+                )
+            )
         ).only(
             'id',
             'content',
@@ -1356,7 +1486,6 @@ class PostService:
             'status__id',
             'status__name'
         ).order_by('-created_at')
-    
 
 class PostSerializerService:
     @staticmethod
@@ -1391,7 +1520,7 @@ class PostSerializerService:
     
     @staticmethod
     def serialize_posts(request, posts):
-        fields_exclude = ['content']
+        fields_exclude = []
         if not request.user.is_authenticated:
             fields_exclude.append('liked')
 
@@ -1455,7 +1584,7 @@ class PostSerializerService:
                     'fields': ['id', 'symbol']
                 },
                 'user': {
-                    'fields': ('id', 'username')
+                    'fields': ('id', 'username', 'favorite_team')
                 },
                 'poststatusdisplayname': {
                     'fields': ['display_name', 'language_data']
@@ -1489,7 +1618,10 @@ class PostSerializerService:
             fields_exclude=fields_exclude,
             context={
                 'user': {
-                    'fields': ('id', 'username')
+                    'fields': ('id', 'username', 'favorite_team')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
                 },
                 'status': {
                     'fields': ('id', 'name')
@@ -1542,7 +1674,10 @@ class PostSerializerService:
             fields_exclude=['post_comment_data'],
             context={
                 'user': {
-                    'fields': ('id', 'username')
+                    'fields': ('id', 'username', 'favorite_team')
+                },
+                'team': {
+                    'fields': ('id', 'symbol')
                 },
                 'status': {
                     'fields': ('id', 'name')

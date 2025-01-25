@@ -139,7 +139,7 @@ def create_post_queryset_without_prefetch_for_user(
     request: Request,
     fields_only: List[str] = [],
     **kwargs: Any
-):
+) -> BaseManager[Post]:
     """
     Create a queryset for the Post model without prefetching related models.\n
 
@@ -190,7 +190,9 @@ def create_post_queryset_without_prefetch_for_user(
     if fields_only:
         return queryset.only(*fields_only)
 
-    return queryset.exclude(status__name='deleted')
+    return queryset.exclude(
+        status__name='deleted',
+    )
 
 def create_comment_queryset_without_prefetch_for_user(
     request: Request,
@@ -296,7 +298,7 @@ def create_inquiry_queryset_without_prefetch_for_user(
     request: Request,
     fields_only: List[str] = [],
     **kwargs: Any
-):
+) -> BaseManager[Inquiry]:
     """
     Create a queryset for the Inquiry model without prefetching related models.\n
 
