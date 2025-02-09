@@ -296,13 +296,13 @@ class PostSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         if not hasattr(obj, 'likes_count'):
             return None
 
-        return obj.likes_count
+        return obj.likes_count if obj.likes_count is not None else 0
     
     def get_comments_count(self, obj):
         if not hasattr(obj, 'comments_count'):
             return None
 
-        return obj.comments_count
+        return obj.comments_count if obj.comments_count is not None else 0
     
     def get_liked(self, obj):
         if not hasattr(obj, 'liked'):
@@ -330,7 +330,7 @@ class PostUpdateSerializer(serializers.Serializer):
         if status is not None:
             status_obj = PostStatus.objects.filter(id=status).first()
             if status_obj:
-                if status_obj.name == 'deleted':
+                if instance.status.name == 'deleted':
                     raise serializers.ValidationError('Cannot update a deleted post')
 
                 instance.status = status_obj
@@ -391,13 +391,13 @@ class PostCommentSerializer(DynamicFieldsSerializerMixin, serializers.ModelSeria
         if not hasattr(obj, 'replies_count'):
             return None
 
-        return obj.replies_count
+        return obj.replies_count if obj.replies_count is not None else 0
 
     def get_likes_count(self, obj):
         if not hasattr(obj, 'likes_count'):
             return None
         
-        return obj.likes_count
+        return obj.likes_count if obj.likes_count is not None else 0
     
     def get_liked(self, obj):
         if not hasattr(obj, 'liked'):

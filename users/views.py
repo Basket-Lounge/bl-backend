@@ -164,6 +164,8 @@ class UserViewSet(ViewSet):
             permission_classes=[IsAuthenticated]
         elif self.action == 'get_unread_notifications_count':
             permission_classes=[IsAuthenticated]
+        elif self.action == 'like_or_unlike_team':
+            permission_classes=[IsAuthenticated]
 
         return [permission() for permission in permission_classes]
     
@@ -225,20 +227,24 @@ class UserViewSet(ViewSet):
     
     @action(
         detail=False,
-        methods=['post'],
+        methods=['patch'],
         url_path=r'me/favorite-teams/(?P<team_id>[0-9a-f-]+)',
         permission_classes=[IsAuthenticated]
     )
-    def post_favorite_team(self, request, team_id):
-        team = TeamService.add_user_favorite_team(request, team_id)
+    def like_or_unlike_team(self, request, team_id):
+        does_team_exist = TeamService.check_team_exists(team_id)
+        if not does_team_exist:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        does_user_like_team = TeamService.check_if_user_likes_team(request.user, team_id)
+        if does_user_like_team:
+            team = TeamService.remove_user_favorite_team(request.user, team_id)
+            serializer = TeamSerializerService.serialize_team_without_teamname(team)
+            return Response(status=HTTP_200_OK, data=serializer.data)
+
+        team = TeamService.add_user_favorite_team(request.user, team_id)
         serializer = TeamSerializerService.serialize_team_without_teamname(team)    
         return Response(status=HTTP_201_CREATED, data=serializer.data)
-    
-    @post_favorite_team.mapping.delete
-    def delete_favorite_team(self, request, team_id):
-        team = TeamService.remove_user_favorite_team(request, team_id)
-        serializer = TeamSerializerService.serialize_team_without_teamname(team)
-        return Response(status=HTTP_200_OK, data=serializer.data)
     
     @action(
         detail=True,
@@ -454,9 +460,10 @@ class UserViewSet(ViewSet):
         except User.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
 
-        enabled, error, data = UserChatService.enable_chat(request, target_user) 
-        if not enabled:
-            return Response(status=HTTP_400_BAD_REQUEST, data=error)
+        try:
+            data = UserChatService.enable_chat(request, target_user) 
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         return Response(status=HTTP_201_CREATED, data=data)
     
@@ -600,7 +607,10 @@ class UserViewSet(ViewSet):
         url_path=r'me/notifications',
     )
     def get_notifications(self, request, pk=None):
-        notifications = NotificationService.get_user_notifications_with_request(request)
+        try:
+            notifications = NotificationService.get_user_notifications_with_request(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         pagination = get_notification_pagination_class(request.query_params.get('context', 'default'))()
         paginated_data = pagination.paginate_queryset(notifications, request)
@@ -663,7 +673,10 @@ class UserViewSet(ViewSet):
         url_path=r'me/notifications/unread',
     )
     def get_unread_notifications(self, request):
-        notifications = NotificationService.get_user_unread_notifications_with_request(request)
+        try:
+            notifications = NotificationService.get_user_unread_notifications_with_request(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         pagination = get_notification_pagination_class(request.query_params.get('context', 'default'))()
         paginated_data = pagination.paginate_queryset(notifications, request)
@@ -677,7 +690,11 @@ class UserViewSet(ViewSet):
         url_path=r'me/notifications/unread/count',
     )
     def get_unread_notifications_count(self, request):
-        count = NotificationService.get_user_unread_notifications_count(request.user)
+        try:
+            count = NotificationService.get_user_unread_notifications_count(request.user)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
         return Response({'count': count})
 
 

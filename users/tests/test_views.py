@@ -289,80 +289,54 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(user_favorite_teams_count, 1)
 
-    def test_post_favorite_team(self):
+    def test_like_or_unlike_team(self):
         user = User.objects.filter(username='testuser').first()
         if not user:
             self.fail("User not found")
 
         factory = APIRequestFactory()
-        view = UserViewSet.as_view({'post': 'post_favorite_team'})
-        team = Team.objects.all().first()
+        view = UserViewSet.as_view({'patch': 'like_or_unlike_team'})
 
-        # test an anonymous user
-        request = factory.post(
+        team = Team.objects.filter(symbol='ATL').first()
+        if not team:
+            self.fail("Team not found")
+
+        request = factory.patch(
             f'/api/users/me/favorite-teams/{team.id}/',
         )
+
+        # test an anonymous user
         response = view(request, team_id=team.id)
         self.assertEqual(response.status_code, 401)
 
         # test a regular user
-        request = factory.post(
-            f'/api/users/me/favorite-teams/{team.id}/',
-        )
         force_authenticate(request, user=user)
         response = view(request, team_id=team.id)
         self.assertEqual(response.status_code, 201)
 
-        user_favorite_teams_count = TeamLike.objects.filter(
-            user__username='testuser'
-        ).count()
-
-        self.assertEqual(user_favorite_teams_count, 1)
-    
-    def test_delete_favorite_team(self):
-        user = User.objects.filter(username='testuser').first()
-        if not user:
-            self.fail("User not found")
-
-        factory = APIRequestFactory()
-        view = UserViewSet.as_view({'delete': 'delete_favorite_team'})
-        team = Team.objects.all().first()
-
-        # test an anonymous user
-        request = factory.delete(
-            f'/api/users/me/favorite-teams/{team.id}/',
+        user_team_likes = TeamLike.objects.filter(
+            user=user,
+            team=team
         )
-        response = view(request, team_id=team.id)
-        self.assertEqual(response.status_code, 401)
 
-        # test a regular user
-        request = factory.post(
-            f'/api/users/me/favorite-teams/{team.id}/',
-        )
-        force_authenticate(request, user=user)
-        view = UserViewSet.as_view({'post': 'post_favorite_team'})
-        response = view(request, team_id=team.id)
+        if user_team_likes.count() == 0:
+            self.fail("User has no likes")
 
-        user_favorite_teams_count = TeamLike.objects.filter(
-            user__username='testuser'
-        ).count()
+        self.assertEqual(user_team_likes[0].favorite, False)
+        self.assertEqual(user_team_likes[0].user, user)
+        self.assertEqual(user_team_likes[0].team, team)
 
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(user_favorite_teams_count, 1)
-
-        request = factory.delete(
-            f'/api/users/me/favorite-teams/{team.id}/',
-        )
-        force_authenticate(request, user=user)
-        view = UserViewSet.as_view({'delete': 'delete_favorite_team'})
+        # Unlike the team
         response = view(request, team_id=team.id)
         self.assertEqual(response.status_code, 200)
 
-        user_favorite_teams_count = TeamLike.objects.filter(
-            user__username='testuser'
-        ).count()
+        user_team_likes = TeamLike.objects.filter(
+            user=user,
+            team=team
+        )
 
-        self.assertEqual(user_favorite_teams_count, 0)
+        if user_team_likes.count() > 0:
+            self.fail("User has no likes")
 
     def test_get_user_posts(self):
         user = User.objects.filter(username='testuser').first()
@@ -413,8 +387,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(data['count'], 1)
         self.assertEqual(len(data['results']), 1)
         self.assertEqual(data['results'][0]['title'], 'test title')
-        # Shouldn't return the content
-        self.assertFalse('content' in data['results'][0])
+        # Should return the content
+        self.assertTrue('content' in data['results'][0])
 
         # Create 10 more posts
         for i in range(10):
@@ -511,8 +485,8 @@ class UserAPIEndpointTestCase(APITestCase):
         self.assertEqual(data['count'], 1)
         self.assertEqual(len(data['results']), 1)
         self.assertEqual(data['results'][0]['title'], 'test title')
-        # Shouldn't return the content
-        self.assertFalse('content' in data['results'][0])
+        # Should return the content
+        self.assertTrue('content' in data['results'][0])
 
         # Create 10 more posts
         for i in range(10):

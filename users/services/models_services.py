@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Tuple, Any
+from typing import Dict, List, Tuple, Any
 from api.exceptions import AnonymousUserError, BadRequestError, NotFoundError
 from management.models import (
     Inquiry, 
@@ -941,7 +941,7 @@ class UserChatService:
         ).update(last_read_at=datetime.now(timezone.utc))
 
     @staticmethod
-    def enable_chat(request: Request, target_user: User) -> Tuple[bool, Any, Any]:
+    def enable_chat(request: Request, target_user: User) -> Dict[str, str]:
         """
         Enable a chat between two users after it has been blocked or deleted.
 
@@ -950,10 +950,16 @@ class UserChatService:
             - target_user (User): The user to enable the chat with.
 
         Returns:
-            - Tuple[bool, Any, Any]: A tuple containing the success status, error message, and chat data.
+            - Dict[str, str]: The id of the chat.
         """
         if not request.user.is_authenticated:
-            return False, {'error': 'User is not authenticated.'}, None
+            raise AnonymousUserError()
+        
+        if not target_user.is_authenticated:
+            raise BadRequestError('User is not authenticated.')
+        
+        if request.user.id == target_user.id:
+            raise BadRequestError('User cannot chat with themselves.')
 
         chat = UserChat.objects.filter(
             userchatparticipant__user=request.user
@@ -971,7 +977,7 @@ class UserChatService:
 
             # If the chat is blocked by a user that is not the current user, then return 400
             if target_user.chat_blocked or target_participant.chat_blocked:
-                return False, {'error': 'Chat is blocked by the other user.'}, None
+                raise BadRequestError('Chat is blocked by the other user.')
             
             if user_participant.chat_blocked:
                 user_participant.chat_blocked = False
@@ -981,7 +987,7 @@ class UserChatService:
                 user_participant.last_read_at = datetime.now(timezone.utc)
                 user_participant.save()
 
-                return True, None, {'id': str(chat.id)}
+                return {'id': str(chat.id)}
 
             if user_participant.chat_deleted:
                 user_participant.chat_deleted = False
@@ -989,9 +995,9 @@ class UserChatService:
                 user_participant.last_read_at = datetime.now(timezone.utc)
                 user_participant.save()
 
-                return True, None, {'id': str(chat.id)}
+                return {'id': str(chat.id)}
 
-            return False, {'error': 'Chat is already enabled.'}, None
+            raise BadRequestError('Chat is already enabled.')
 
         chat = UserChat.objects.create()
         UserChatParticipant.objects.bulk_create([
@@ -999,7 +1005,7 @@ class UserChatService:
             UserChatParticipant(user=target_user, chat=chat)
         ])
 
-        return True, None, {'id': str(chat.id)}
+        return {'id': str(chat.id)}
     
     @staticmethod
     def check_chat_exists(user: User, user_id: int) -> int | None:
