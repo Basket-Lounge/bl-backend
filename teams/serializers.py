@@ -73,10 +73,16 @@ class TeamSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
         return serializer.data
     
     def get_likes_count(self, obj):
-        return obj.teamlike_set.count()
+        if not hasattr(obj, 'likes_count'):
+            return 0
+
+        return obj.likes_count if obj.likes_count is not None else 0
     
     def get_liked(self, obj):
-        return obj.liked
+        if not hasattr(obj, 'liked'):
+            return False
+
+        return obj.liked if obj.liked is not None else False
     
 
 class TeamLikeSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):

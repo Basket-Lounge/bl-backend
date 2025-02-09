@@ -2,7 +2,10 @@ from rest_framework.test import APITestCase, APIRequestFactory, force_authentica
 
 from notification.models import Notification
 from teams.models import (
-    Post, 
+    Post,
+    PostCommentHide,
+    PostCommentReplyHide,
+    PostCommentReplyStatus, 
     PostLike, 
     PostStatus, 
     Team, 
@@ -126,7 +129,7 @@ class TeamsAPIEndpointTestCase(APITestCase):
         first_post = data['results'][0]
         self.assertTrue('id' in first_post)
         self.assertTrue('title' in first_post)
-        self.assertFalse('content' in first_post)
+        self.assertTrue('content' in first_post)
         self.assertFalse('liked' in first_post)
         self.assertTrue('likes_count' in first_post)
         self.assertTrue('comments_count' in first_post)
@@ -158,7 +161,7 @@ class TeamsAPIEndpointTestCase(APITestCase):
         first_post = data['results'][0]
         self.assertTrue('id' in first_post)
         self.assertTrue('title' in first_post)
-        self.assertFalse('content' in first_post)
+        self.assertTrue('content' in first_post)
         self.assertTrue('liked' in first_post)
         self.assertTrue('likes_count' in first_post)
         self.assertTrue('comments_count' in first_post)
@@ -285,8 +288,39 @@ class TeamsAPIEndpointTestCase(APITestCase):
         for post in data['results']:
             self.assertTrue('id' in post)
             self.assertTrue('title' in post)
-            self.assertFalse('content' in post)
+            self.assertTrue('content' in post)
             self.assertFalse('liked' in post)
+            self.assertTrue('likes_count' in post)
+            self.assertTrue('comments_count' in post)
+            self.assertTrue('team_data' in post)
+            self.assertTrue('user_data' in post)
+            self.assertTrue('status_data' in post)
+            self.assertTrue('created_at' in post)
+            self.assertTrue('updated_at' in post)
+            
+            self.assertEqual(post['status_data']['name'], 'created')
+
+        # authenticated user
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id)
+
+        data = response.data
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('results' in data)
+        self.assertTrue('count' in data)
+        self.assertTrue('next' in data)
+        self.assertTrue('previous' in data)
+
+        self.assertEqual(data['count'], 10)
+        self.assertEqual(len(data['results']), 10)
+        self.assertTrue(data['next'] is None)
+        self.assertTrue(data['previous'] is None)
+
+        for post in data['results']:
+            self.assertTrue('id' in post)
+            self.assertTrue('title' in post)
+            self.assertTrue('content' in post)
+            self.assertTrue('liked' in post)
             self.assertTrue('likes_count' in post)
             self.assertTrue('comments_count' in post)
             self.assertTrue('team_data' in post)
@@ -375,7 +409,7 @@ class TeamsAPIEndpointTestCase(APITestCase):
         for post in data['results']:
             self.assertTrue('id' in post)
             self.assertTrue('title' in post)
-            self.assertFalse('content' in post)
+            self.assertTrue('content' in post)
             self.assertFalse('liked' in post)
             self.assertTrue('likes_count' in post)
             self.assertTrue('comments_count' in post)
@@ -405,7 +439,7 @@ class TeamsAPIEndpointTestCase(APITestCase):
         for post in data['results']:
             self.assertTrue('id' in post)
             self.assertTrue('title' in post)
-            self.assertFalse('content' in post)
+            self.assertTrue('content' in post)
             self.assertTrue('liked' in post)
             self.assertTrue('likes_count' in post)
             self.assertTrue('comments_count' in post)
@@ -1102,3 +1136,216 @@ class TeamsAPIEndpointTestCase(APITestCase):
         )
         self.assertTrue(notification.exists())
         self.assertEqual(notification.count(), 1)
+
+    def test_hide_or_unhide_comment(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        # Create a post
+        team = Team.objects.all().first()
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        # Create a comment
+        comment = PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.objects.get(name='created'),
+            content='Test Comment',
+        )
+
+        factory = APIRequestFactory()
+        request = factory.patch(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/hidden/',
+        )
+        view = TeamViewSet.as_view({'patch': 'hide_or_unhide_comment'})
+
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+        self.assertEqual(response.status_code, 401)
+
+        # Reader hides and unhides a comment
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+        self.assertEqual(response.status_code, 200)
+
+        is_comment_hidden = PostCommentHide.objects.filter(
+            post_comment=comment,
+            user=user2
+        )
+        self.assertTrue(is_comment_hidden.exists())
+
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+        self.assertEqual(response.status_code, 200)
+
+        is_comment_hidden = PostCommentHide.objects.filter(
+            post_comment=comment,
+            user=user2
+        )
+        self.assertFalse(is_comment_hidden.exists())
+
+        # Try to hide a comment as an author
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id))
+        self.assertEqual(response.status_code, 400)
+
+        # Try to hide a comment that doesn't exist
+        request = factory.patch(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/00000000-0000-0000-0000-000000000000/hidden/',
+        )
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id='00000000-0000-0000-0000-000000000000')
+        self.assertEqual(response.status_code, 404)
+
+    def test_delete_reply(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        # Create a post
+        team = Team.objects.all().first()
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        # Create a comment
+        comment = PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.objects.get(name='created'),
+            content='Test Comment',
+        )
+
+        # Create a reply
+        reply = PostCommentReply.objects.create(
+            user=user,
+            post_comment=comment,
+            status=PostCommentReplyStatus.objects.get(name='created'),
+            content='Test Reply',
+        )
+
+        factory = APIRequestFactory()
+        request = factory.delete(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/{str(reply.id)}/',
+        )
+        view = TeamViewSet.as_view({'delete': 'delete_reply'})
+
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+        self.assertEqual(response.status_code, 401)
+
+        # Reader tries to delete a reply
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+
+        self.assertEqual(response.status_code, 404)
+
+        # Author deletes a reply
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+
+        self.assertEqual(response.status_code, 200)
+
+        reply.refresh_from_db()
+        self.assertEqual(reply.status.name, 'deleted')
+
+        # Try to delete a reply that doesn't exist
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id='00000000-0000-0000-0000-000000000000')
+        self.assertEqual(response.status_code, 404)
+
+    def test_hide_or_unhide_reply(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        user2 = User.objects.filter(username='testuser2').first()
+        if not user2:
+            self.fail("User not found")
+
+        # Create a post
+        team = Team.objects.all().first()
+        status = PostStatus.objects.filter(name='created').first()
+        post = Post.objects.create(
+            title='Fake Post',
+            content='Fake Content',
+            user=user,
+            team=team,
+            status=status,
+        )
+
+        # Create a comment
+        comment = PostComment.objects.create(
+            user=user,
+            post=post,
+            status=PostCommentStatus.objects.get(name='created'),
+            content='Test Comment',
+        )
+
+        # Create a reply
+        reply = PostCommentReply.objects.create(
+            user=user,
+            post_comment=comment,
+            status=PostCommentReplyStatus.objects.get(name='created'),
+            content='Test Reply',
+        )
+
+        factory = APIRequestFactory()
+        request = factory.patch(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/{str(reply.id)}/hidden/',
+        )
+        view = TeamViewSet.as_view({'patch': 'hide_or_unhide_reply'})
+
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+        self.assertEqual(response.status_code, 401)
+
+        # Reader hides and unhides a reply
+        force_authenticate(request, user=user2)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+        self.assertEqual(response.status_code, 200)
+
+        is_reply_hidden = PostCommentReplyHide.objects.filter(
+            post_comment_reply=reply,
+            user=user2
+        )
+        self.assertTrue(is_reply_hidden.exists())
+
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+        self.assertEqual(response.status_code, 200)
+
+        is_reply_hidden = PostCommentReplyHide.objects.filter(
+            post_comment_reply=reply,
+            user=user2
+        )
+        self.assertFalse(is_reply_hidden.exists())
+
+        # Try to hide a reply as an author
+        force_authenticate(request, user=user)
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id=str(reply.id))
+        self.assertEqual(response.status_code, 400)
+
+        # Try to hide a reply that doesn't exist
+        request = factory.patch(
+            f'/api/teams/{team.id}/posts/{str(post.id)}/comments/{str(comment.id)}/replies/00000000-0000-0000-0000-000000000000/hidden/',
+        )
+        force_authenticate(request, user=user2)
+
+        response = view(request, pk=team.id, post_id=str(post.id), comment_id=str(comment.id), reply_id='00000000-0000-0000-0000-000000000000')
+        self.assertEqual(response.status_code, 404)

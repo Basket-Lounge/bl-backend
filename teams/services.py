@@ -3,7 +3,7 @@ import re
 from typing import List
 
 from django.db import transaction
-from django.db.models import Q, Prefetch, Count, Exists, OuterRef
+from django.db.models import Q, Prefetch, Count, Exists, OuterRef, Subquery, F
 from django.db.models.manager import BaseManager
 
 from nba_api.stats.endpoints.franchisehistory import FranchiseHistory
@@ -26,9 +26,12 @@ from players.serializers import PlayerSerializer
 from teams.forms import TeamPostCommentForm, TeamPostForm
 from teams.models import (
     Post, 
-    PostComment, 
+    PostComment,
+    PostCommentHide, 
     PostCommentLike, 
     PostCommentReply,
+    PostCommentReplyHide,
+    PostCommentReplyStatus,
     PostCommentReplyStatusDisplayName,
     PostCommentStatus,
     PostCommentStatusDisplayName,
@@ -521,9 +524,9 @@ def create_comment_queryset_without_prefetch_for_post(
 ):
     """
     Create a queryset for the PostComment model without prefetching related models.\n
-    - request: request object.\n
-    - fields_only: list of fields to return in the queryset.\n
-    - **kwargs: keyword arguments to filter
+        - request: request object.\n
+        - fields_only: list of fields to return in the queryset.\n
+        - **kwargs: keyword arguments to filter
     """
 
     if kwargs is not None:
@@ -588,7 +591,7 @@ def create_comment_queryset_without_prefetch_for_post(
     if fields_only:
         return queryset.only(*fields_only)
 
-    return queryset.exclude(status__name='deleted')
+    return queryset.exclude(status=PostCommentStatus.get_deleted_role())
 
 
 class TeamService:
@@ -607,6 +610,10 @@ class TeamService:
 
     @staticmethod
     def get_team(request, pk):
+        likes_count_subquery = TeamLike.objects.filter(team=OuterRef('pk')).values('team').annotate(
+            likes_count=Count('team')
+        ).values('likes_count')
+
         team = Team.objects.prefetch_related(
             Prefetch(
                 'teamname_set',
@@ -618,6 +625,7 @@ class TeamService:
 
         if request.user.is_authenticated:
             team = team.annotate(
+                likes_count=Subquery(likes_count_subquery),
                 liked=Exists(TeamLike.objects.filter(user=request.user, team=OuterRef('pk')))
             )
 
@@ -701,28 +709,40 @@ class TeamService:
             ])
 
             return True, None
+        
+    @staticmethod
+    def check_if_user_likes_team(user, team_id):
+        return TeamLike.objects.filter(user=user, team__id=team_id).exists()
     
     @staticmethod
-    def add_user_favorite_team(request, team_id):
-        user = request.user
+    def add_user_favorite_team(user, team_id):
         TeamLike.objects.get_or_create(
             user=user, 
             team=Team.objects.get(id=team_id)
         )
-        
+
+        likes_count_subquery = TeamLike.objects.filter(team=OuterRef('pk')).values('team').annotate(
+            likes_count=Count('team')
+        ).values('likes_count')
+
         return Team.objects.filter(id=team_id).annotate(
+            likes_count=Subquery(likes_count_subquery),
             liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
         ).first()
     
     @staticmethod
-    def remove_user_favorite_team(request, team_id):
-        user = request.user
+    def remove_user_favorite_team(user, team_id):
         try:
             TeamLike.objects.get(user=user, team__id=team_id).delete()
         except TeamLike.DoesNotExist:
             pass
         
+        likes_count_subquery = TeamLike.objects.filter(team=OuterRef('pk')).values('team').annotate(
+            likes_count=Count('team'),
+        ).values('likes_count')
+
         return Team.objects.filter(id=team_id).annotate(
+            likes_count=Subquery(likes_count_subquery),
             liked=Exists(TeamLike.objects.filter(user=user, team=OuterRef('pk')))
         ).first()
 
@@ -842,8 +862,9 @@ class TeamPlayerService:
         return PlayerCareerStatistics.objects.none()
     
     def get_team_player_with_season_stats(player_id):
-        return Player.objects.filter(id=player_id).prefetch_related(
-            'playerstatistics_set'
+        return PlayerCareerStatistics.objects.select_related('player', 'team').filter(
+            player__id=player_id,
+            season_id='2024-25'
         ).first()
     
     def get_team_player_last_n_games_log(player_id, n=5):
@@ -886,10 +907,21 @@ class TeamPlayerSerializerService:
             }
         )
     
-    def serialize_player_for_season_stats(player):
-        return PlayerSerializer(
-            player,
-            fields=['season_stats'],
+    def serialize_player_for_season_stats(season_stats: PlayerCareerStatistics):
+        return PlayerCareerStatisticsSerializer(
+            season_stats,
+            fields_exclude=['player', 'team'],
+            context={
+                'team': {
+                    'fields': ('id', 'symbol', 'teamname_set')
+                },
+                'teamname': {
+                    'fields': ('name', 'language')
+                },
+                'language': {
+                    'fields': ('name',)
+                }
+            }
         )
     
     def serialize_player_games_stats(stats):
@@ -1027,6 +1059,12 @@ class PostService:
         """
         teamname_queryset = TeamName.objects.select_related('language')
 
+        likes_count_subquery = PostLike.objects.filter(post=OuterRef('pk')).values('post').annotate(likes_count=Count('id')).values('likes_count')
+        comments_count_subquery = PostComment.objects.filter(
+            post=OuterRef('pk'),
+            status__name='created'
+        ).values('post').annotate(comments_count=Count('id')).values('comments_count')
+
         posts = create_post_queryset_without_prefetch_for_user(
             request,
             fields_only=[
@@ -1048,8 +1086,8 @@ class PostService:
             'team',
             'status'
         ).annotate(
-            likes_count=Count('postlike'),
-            comments_count=Count('postcomment'),
+            likes_count=Subquery(likes_count_subquery),
+            comments_count=Subquery(comments_count_subquery),
         ).prefetch_related(
             Prefetch(
                 'status__poststatusdisplayname_set',
@@ -1084,6 +1122,20 @@ class PostService:
     @staticmethod
     def get_post(request, pk, post_id):
         teamname_queryset = TeamName.objects.select_related('language')
+
+        likes_count_subquery = PostLike.objects.filter(post=OuterRef('pk')).values('post').annotate(likes_count=Count('id')).values('likes_count')
+        if request.user.is_authenticated:
+            comments_count_subquery = PostComment.objects.filter(
+                post=OuterRef('pk'),
+                status__name='created'
+            ).exclude(
+                postcommenthide__user=request.user
+            ).values('post').annotate(comments_count=Count('id')).values('comments_count')
+        else:
+            comments_count_subquery = PostComment.objects.filter(
+                post=OuterRef('pk'),
+                status__name='created'
+            ).values('post').annotate(comments_count=Count('id')).values('comments_count')
 
         post = Post.objects.select_related(
             'user',
@@ -1127,8 +1179,8 @@ class PostService:
         ).exclude(
             status__name='deleted',
         ).annotate(
-            likes_count=Count('postlike'),
-            comments_count=Count('postcomment'),
+            likes_count=Subquery(likes_count_subquery),
+            comments_count=Subquery(comments_count_subquery),
         )
 
         if request.user.is_authenticated:
@@ -1140,13 +1192,14 @@ class PostService:
 
     @staticmethod
     def get_post_after_creating_like(request, team_id, post_id):
+        likes_count_subquery = PostLike.objects.filter(post=OuterRef('pk')).values('post').annotate(likes_count=Count('id')).values('likes_count')
         post = Post.objects.filter(
             team__id=team_id,
             id=post_id
         ).only(
             'id'
         ).annotate(
-            likes_count=Count('postlike'),
+            likes_count=Subquery(likes_count_subquery),
         )
 
         if request.user.is_authenticated:
@@ -1158,6 +1211,12 @@ class PostService:
 
     @staticmethod
     def get_comments(request, pk, post_id):
+        likes_count_subquery = PostCommentLike.objects.filter(post_comment=OuterRef('pk')).values('post_comment').annotate(likes_count=Count('id')).values('likes_count')
+        replies_count_subquery = PostCommentReply.objects.filter(
+            post_comment=OuterRef('pk'),
+            status__name='created'
+        ).values('post_comment').annotate(replies_count=Count('id')).values('replies_count')
+
         query = create_comment_queryset_without_prefetch_for_post(
             request,
             fields_only=[
@@ -1171,13 +1230,14 @@ class PostService:
                 'status__name'
             ],
             post__team__id=pk,
-            post__id=post_id
+            post__id=post_id,
+            status__name='created'
         ).select_related(
             'user',
             'status'
         ).annotate(
-            likes_count=Count('postcommentlike'),
-            replies_count=Count('postcommentreply')
+            likes_count=Subquery(likes_count_subquery),
+            replies_count=Subquery(replies_count_subquery),
         ).prefetch_related(
             Prefetch(
                 'status__postcommentstatusdisplayname_set',
@@ -1199,7 +1259,7 @@ class PostService:
         if request.user.is_authenticated:
             query = query.annotate(
                 liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
-            )
+            ).exclude(postcommenthide__user=request.user)
 
         return query
     
@@ -1235,10 +1295,11 @@ class PostService:
     
     @staticmethod
     def get_10_popular_posts(request):
+        likes_count_subquery = PostLike.objects.filter(post=OuterRef('pk')).values('post').annotate(likes_count=Count('id')).values('likes_count')
+        comments_count_subquery = PostComment.objects.filter(post=OuterRef('pk')).values('post').annotate(comments_count=Count('id')).values('comments_count')
+
         posts = Post.objects.annotate(
             likes_count=Count('postlike'),
-        ).order_by(
-            '-likes_count'
         ).select_related(
             'user',
             'team',
@@ -1254,7 +1315,15 @@ class PostService:
                 'team__teamname_set',
                 queryset=TeamName.objects.select_related('language')
             ),
-            'user__teamlike_set',
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=TeamName.objects.select_related('language')
+                    )
+                )
+            )
         ).only(
             'id', 
             'title', 
@@ -1271,8 +1340,10 @@ class PostService:
         ).exclude(
             Q(status__name='deleted') | Q(status__name='hidden')
         ).annotate(
-            likes_count=Count('postlike'),
-            comments_count=Count('postcomment'),
+            likes_count=Subquery(likes_count_subquery),
+            comments_count=Subquery(comments_count_subquery),
+        ).order_by(
+            F('likes_count').desc(nulls_last=True)  # Order by likes_count descending
         )
 
         if request.user.is_authenticated:
@@ -1284,12 +1355,11 @@ class PostService:
     
     @staticmethod
     def get_team_10_popular_posts(request, pk):
-        posts = Post.objects.annotate(
-            likes_count=Count('postlike'),
-        ).filter(
+        likes_count_subquery = PostLike.objects.filter(post=OuterRef('pk')).values('post').annotate(likes_count=Count('id')).values('likes_count')
+        comments_count_subquery = PostComment.objects.filter(post=OuterRef('pk')).values('post').annotate(comments_count=Count('id')).values('comments_count')
+
+        posts = Post.objects.filter(
             team__id=pk
-        ).order_by(
-            '-likes_count'
         ).select_related(
             'user',
             'team',
@@ -1301,7 +1371,19 @@ class PostService:
                     'language'
                 )
             ),
-            'user__teamlike_set',
+            Prefetch(
+                'team__teamname_set',
+                queryset=TeamName.objects.select_related('language')
+            ),
+            Prefetch(
+                'user__teamlike_set',
+                queryset=TeamLike.objects.select_related('team').prefetch_related(
+                    Prefetch(
+                        'team__teamname_set',
+                        queryset=TeamName.objects.select_related('language')
+                    )
+                )
+            )
         ).only(
             'id', 
             'title', 
@@ -1318,8 +1400,10 @@ class PostService:
         ).exclude(
             Q(status__name='deleted') | Q(status__name='hidden')
         ).annotate(
-            likes_count=Count('postlike'),
-            comments_count=Count('postcomment'),
+            likes_count=Subquery(likes_count_subquery),
+            comments_count=Subquery(comments_count_subquery),
+        ).order_by(
+            F('likes_count').desc(nulls_last=True)  # Order by likes_count descending, placing NULLs last
         )
 
         if request.user.is_authenticated:
@@ -1369,9 +1453,24 @@ class PostService:
         return True, None
     
     @staticmethod
-    def delete_comment(user_id, comment_id):
-        comment = PostComment.objects.filter(user__id=user_id, id=comment_id).first()
+    def delete_comment(user: User, comment_id: str) -> None:
+        """
+        This method deletes a comment for a user.
 
+        Args:
+            - user (User): The user that deletes the comment.
+            - comment_id (str): The id of the comment to delete.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        comment = PostComment.objects.filter(user=user, id=comment_id).first()
         if not comment:
             return
         
@@ -1389,30 +1488,87 @@ class PostService:
         serializer.save()
     
     @staticmethod
-    def get_comment_with_likes_only(request, pk, post_id, comment_id):
+    def get_comment_with_likes_only(
+        request: Request,
+        pk: str,
+        post_id: str, 
+        comment_id: str
+    ) -> BaseManager[PostComment]:
+        """
+        This method returns a comment with only the likes count.
+
+        Args:
+            - request (Request): The request object.
+            - pk (str): The id of the team.
+            - post_id (str): The id of the post.
+            - comment_id (str): The id of the comment.
+        
+        Returns:
+            - BaseManager[PostComment]: The comment with the likes count.
+        """
+        likes_count_subquery = PostCommentLike.objects.filter(post_comment=OuterRef('pk')).values('post_comment').annotate(likes_count=Count('id')).values('likes_count')
         comment = PostComment.objects.filter(
             post__team__id=pk,
             post__id=post_id,
             id=comment_id
-        ).only('id').annotate(
-            likes_count=Count('postcommentlike')
+        ).only(
+            'id'
+        ).annotate(
+            likes_count=Subquery(likes_count_subquery)
         )
 
         if request.user.is_authenticated:
             comment = comment.annotate(
-                liked=Exists(PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk')))
+                liked=Exists(
+                    PostCommentLike.objects.filter(user=request.user, post_comment=OuterRef('pk'))
+                )
             )
 
         return comment.first()
 
     @staticmethod
-    def like_comment(request, comment):
-        user = request.user
+    def check_if_comment_hidden(comment_id: str, user: User) -> bool:
+        """
+        This method checks if a comment is hidden for a user.
+
+        Args:
+            - comment_id (str): The id of the comment to check.
+            - user (User): The user to check.
+
+        Returns:
+            - bool: True if the comment is hidden, False otherwise.
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
         if not user.is_authenticated:
             raise AnonymousUserError()
 
+        return PostCommentHide.objects.filter(
+            post_comment__id=comment_id,
+            user=user
+        ).exists()
+
+    @staticmethod
+    def like_comment(request: Request, comment: PostComment) -> None:
+        """
+        This method likes a comment for a user.
+
+        Args:
+            - request (Request): The request object.
+            - comment (PostComment): The comment to like.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
+
         PostCommentLike.objects.get_or_create(
-            user=user,
+            user=request.user,
             post_comment=comment
         )
 
@@ -1421,14 +1577,36 @@ class PostService:
             NotificationService.create_notification_for_post_comment_likes(
                 comment, 
                 likes_count, 
-                user
+                request.user
             )
-    
+
     @staticmethod
-    def unlike_comment(request, pk, post_id, comment_id):
-        user = request.user
+    def unlike_comment(
+        request: Request, 
+        pk: str, 
+        post_id: str, 
+        comment_id: str
+    ) -> BaseManager[PostComment]:
+        """
+        This method unlikes a comment for a user.
+
+        Args:
+            - request (Request): The request object.
+            - pk (str): The id of the team.
+            - post_id (str): The id of the post.
+            - comment_id (str): The id of the comment.
+
+        Returns:
+            - BaseManager[PostComment]: The comment with the likes count.
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
+
         try:
-            like = PostCommentLike.objects.get(user=user, post_comment__id=comment_id)
+            like = PostCommentLike.objects.get(user=request.user, post_comment__id=comment_id)
             like.delete()
         except PostCommentLike.DoesNotExist:
             pass
@@ -1436,7 +1614,68 @@ class PostService:
         return PostService.get_comment_with_likes_only(request, pk, post_id, comment_id)
     
     @staticmethod
-    def create_comment_reply(request, comment):
+    def hide_comment(comment_id: str, user: User) -> None:
+        """
+        This method hides a comment for a user.
+
+        Args:
+            - comment_id (str): The id of the comment to hide.
+            - user (User): The user that hides the comment.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        comment = PostComment.objects.get(id=comment_id)
+        PostCommentHide.objects.get_or_create(
+            post_comment=comment,
+            user=user
+        )
+
+    @staticmethod
+    def unhide_comment(comment_id: str, user: User) -> None:
+        """
+        This method unhides a comment for a user.
+
+        Args:
+            - comment_id (str): The id of the comment to unhide.
+            - user (User): The user that unhides the comment.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        comment = PostComment.objects.get(id=comment_id)
+        PostCommentHide.objects.filter(
+            post_comment=comment,
+            user=user
+        ).delete()
+    
+    @staticmethod
+    def create_comment_reply(request: Request, comment: PostComment) -> None:
+        """
+        This method creates a reply for a comment.
+
+        Args:
+            - request (Request): The request object.
+            - comment (PostComment): The comment to reply to.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
         if not request.user.is_authenticated:
             raise AnonymousUserError()
 
@@ -1454,9 +1693,93 @@ class PostService:
             )
 
     @staticmethod
-    def get_comment_replies(comment_id):
-        return PostCommentReply.objects.filter(
-            post_comment__id=comment_id
+    def hide_reply(reply_id: str, user: User) -> None:
+        """
+        This method hides a comment reply for a user.
+
+        Args:
+            - reply_id (str): The id of the reply to hide.
+            - user (User): The user that hides the reply.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        reply = PostCommentReply.objects.get(id=reply_id)
+        PostCommentReplyHide.objects.get_or_create(
+            post_comment_reply=reply,
+            user=user
+        )
+
+    @staticmethod
+    def unhide_reply(reply_id: str, user: User) -> None:
+        """
+        This method unhides a comment reply for a user.
+
+        Args:
+            - reply_id (str): The id of the reply to unhide.
+            - user (User): The user that unhides the reply.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        reply = PostCommentReply.objects.get(id=reply_id)
+        PostCommentReplyHide.objects.filter(
+            post_comment_reply=reply,
+            user=user
+        ).delete()
+
+    @staticmethod
+    def delete_reply(user: User, reply_id: str) -> None:
+        """
+        This method deletes a comment reply.
+
+        Args:
+            - user (User): The user that deletes the reply.
+            - reply_id (str): The id of the reply to delete.
+
+        Returns:
+            - None
+
+        Raises:
+            - AnonymousUserError: If the user is not authenticated
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        reply = PostCommentReply.objects.filter(user=user, id=reply_id).first()
+        if not reply:
+            return
+        
+        reply.status = PostCommentReplyStatus.get_deleted_role()
+        reply.save()
+
+    @staticmethod
+    def get_comment_replies(comment_id: str, user: User) -> BaseManager[PostCommentReply]:
+        """
+        This method returns a queryset of replies for a comment.
+
+        Args:
+            - comment_id (str): The id of the comment.
+            - user (User): The user to get the replies for.
+
+        Returns:
+            - BaseManager[PostCommentReply]: A queryset of replies for the comment.
+        """
+        queryset = PostCommentReply.objects.filter(
+            post_comment__id=comment_id,
+            status__name='created'
         ).select_related(
             'user',
             'status'
@@ -1485,7 +1808,79 @@ class PostService:
             'user__username',
             'status__id',
             'status__name'
-        ).order_by('-created_at')
+        ).order_by(
+            '-created_at'
+        )
+
+        if user.is_authenticated:
+            queryset = queryset.exclude(
+                postcommentreplyhide__user=user
+            )
+
+        return queryset
+    
+    @staticmethod
+    def check_if_reply_hidden(reply_id: str, user: User) -> bool:
+        """
+        This method checks if a reply is hidden for a user.
+
+        Args:
+            - reply_id (str): The id of the reply to check.
+            - user (User): The user to check.
+        
+        Returns:
+            - bool: True if the reply is hidden, False otherwise.
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        return PostCommentReplyHide.objects.filter(
+            post_comment_reply__id=reply_id,
+            user=user
+        ).exists()
+    
+    @staticmethod
+    def hide_comment_reply(reply_id: str, user: User) -> None:
+        """
+        This method hides a comment reply for a user.
+
+        Args:
+            - reply_id (str): The id of the reply to hide.
+            - user (User): The user that hides the reply.
+        
+        Returns:
+            - None
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        reply = PostCommentReply.objects.get(id=reply_id)
+        PostCommentReplyHide.objects.get_or_create(
+            post_comment_reply=reply,
+            user=user
+        )
+
+    @staticmethod
+    def unhide_comment_reply(reply_id: str, user: User) -> None:
+        """
+        This method unhides a comment reply for a user.
+
+        Args:
+            - reply_id (str): The id of the reply to unhide.
+            - user (User): The user that unhides the reply.
+
+        Returns:
+            - None
+        """
+        if not user.is_authenticated:
+            raise AnonymousUserError()
+
+        reply = PostCommentReply.objects.get(id=reply_id)
+        PostCommentReplyHide.objects.filter(
+            post_comment_reply=reply,
+            user=user
+        ).delete()
+
 
 class PostSerializerService:
     @staticmethod

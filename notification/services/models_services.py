@@ -188,7 +188,7 @@ class NotificationService:
     
     @staticmethod
     def get_user_notifications_with_request(request: Request) -> BaseManager[Notification]:
-        '''
+        """
         Get the notifications for a user.
 
         Args:
@@ -196,7 +196,9 @@ class NotificationService:
 
         Returns:
             BaseManager[Notification]: The QuerySet of notifications.
-        '''
+        """
+        if not request.user.is_authenticated:
+            raise AnonymousUserError()
 
         notifications = create_notification_queryset_without_prefetch(
             request,
@@ -250,19 +252,21 @@ class NotificationService:
     
     @staticmethod
     def get_user_unread_notifications_with_request(request: Request) -> BaseManager[Notification]:
-        '''
+        """
         Get the unread notifications for a user. 
         Requires the request object for dynamically filtering the queryset.
 
         Args:
-            request (Request): The request object.
+            - request (Request): The request object.
 
         Returns:
-            BaseManager[Notification]: The QuerySet of unread notifications.
-        '''
+            - BaseManager[Notification]: The QuerySet of unread notifications.
 
+        Raises:
+            - AnonymousUserError: If the user is not authenticated.
+        """
         if not request.user.is_authenticated:
-            raise ValueError('User is not authenticated')
+            raise AnonymousUserError()
         
         notifications = create_notification_queryset_without_prefetch(
             request,
@@ -317,17 +321,17 @@ class NotificationService:
     
     @staticmethod
     def get_user_unread_notifications_count(user: User) -> int:
-        '''
+        """
         Get the number of unread notifications for a user.
 
         Args:
-            user (User): The user to get the notifications for.
+            - user (User): The user to get the notifications for.
 
         Returns:
-            int: The number of unread notifications.
-        '''
+            - int: The number of unread notifications.
+        """
 
-        if user == AnonymousUser:
+        if not user.is_authenticated:
             raise AnonymousUserError()
 
         return Notification.objects.filter(
@@ -341,8 +345,11 @@ class NotificationService:
         Delete a user's notifications.
 
         Args:
-            user (User): The user who received the notifications.
-            data (List[str]): The IDs of the notifications to delete.
+            - user (User): The user who received the notifications.
+            - data (List[str] | None | dict): The IDs of the notifications to delete.
+
+        Raises:
+            - BadRequestError: If the data is not a list of UUID strings.
         """
 
         queryset = NotificationRecipient.objects.filter(
@@ -373,7 +380,11 @@ class NotificationService:
         Mark a user's notifications as read.
 
         Args:
-            user (User): The user who received the notifications.
+            - user (User): The user who received the notifications.
+            - data (List[str]): The IDs of the notifications to mark as read.
+
+        Raises:
+            - BadRequestError: If the data is not a list of UUID strings.
         """
 
         queryset = NotificationRecipient.objects.filter(
@@ -407,11 +418,11 @@ class NotificationService:
         Get a user's notification by ID.
 
         Args:
-            notification_id (str): The ID of the notification.
-            user (User): The user who received the notification.
+            - notification_id (str): The ID of the notification.
+            - user (User): The user who received the notification.
 
         Returns:
-            Notification | None: The notification if it exists, None otherwise.
+            - Notification | None: The notification if it exists, None otherwise.
         """
 
         notification = Notification.objects.filter(
@@ -483,8 +494,8 @@ class NotificationService:
         Create a notification for how many likes a post has.
 
         Args:
-            post (Post): The post that was liked.
-            number_of_likes (int): The number of likes the post has.
+            - post (Post): The post that was liked.
+            - number_of_likes (int): The number of likes the post has.
         """
 
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
@@ -521,11 +532,11 @@ class NotificationService:
         Create a notification for a comment on a post.
 
         Args:
-            post (Post): The post that was commented on.
-            user (User): The user who commented.
+            - post (Post): The post that was commented on.
+            - user (User): The user who commented.
 
         Returns:
-            Notification: The notification that was created.
+            - Notification: The notification that was created.
         """
 
         if post.user == user:
@@ -567,14 +578,13 @@ class NotificationService:
         Create a notification for how many replies a comment has.
 
         Args:
-            reply (PostCommentReply): The reply that was made.
-            replies_count (int): The number of replies the comment has.
-            user (User): The user who made the reply.
+            - reply (PostCommentReply): The reply that was made.
+            - replies_count (int): The number of replies the comment has.
+            - user (User): The user who made the reply.
 
         Returns:
-            Notification: The notification that was created.
+            - Notification: The notification that was created.
         """
-
         if reply.post_comment.user == user:
             return
 
@@ -616,12 +626,12 @@ class NotificationService:
         Create a notification for how many likes a comment has.
 
         Args:
-            post_comment (PostComment): The comment that was liked.
-            number_of_likes (int): The number of likes the comment has.
-            user (User): The user who liked the comment.
+            - post_comment (PostComment): The comment that was liked.
+            - number_of_likes (int): The number of likes the comment has.
+            - user (User): The user who liked the comment.
 
         Returns:
-            Notification: The notification that was created.
+            - Notification: The notification that was created.
         """
 
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
@@ -663,12 +673,12 @@ class NotificationService:
         Create a notification for how many likes a user has.
 
         Args:
-            user (User): The user who liked the other user.
-            liked_user (User): The user who was liked.
-            number_of_likes (int): The number of likes the user has.
+            - user (User): The user who liked the other user.
+            - liked_user (User): The user who was liked.
+            - number_of_likes (int): The number of likes the user has.
 
         Returns:
-            Notification: The notification that was created.
+            - Notification: The notification that was created.
         """
 
         existence = NotificationService.check_if_notification_exists_by_various_criteria(
@@ -707,10 +717,10 @@ class NotificationService:
         Create a notification for when a user logs in.
 
         Args:
-            user (User): The user who logged in.
+            - user (User): The user who logged in.
 
         Returns:
-            Notification: The notification that was created.
+            - Notification: The notification that was created.
         """
 
         template = NotificationTemplate.objects.get(subject='user-login')
@@ -739,8 +749,8 @@ class NotificationService:
         Mark a user's notification as read.
 
         Args:
-            notification_id (str): The ID of the notification.
-            user (User): The user who received the notification.
+            - notification_id (str): The ID of the notification.
+            - user (User): The user who received the notification.
         """
 
         queryset = NotificationRecipient.objects.filter(
@@ -765,8 +775,8 @@ class NotificationService:
         Delete a user's notification.
 
         Args:
-            notification_id (str): The ID of the notification.
-            user (User): The user who received the notification.
+            - notification_id (str): The ID of the notification.
+            - user (User): The user who received the notification.
         """
 
         queryset = NotificationRecipient.objects.filter(

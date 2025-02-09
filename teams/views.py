@@ -15,6 +15,7 @@ from notification.services.models_services import NotificationService
 from teams.models import (
     Post,
     PostComment,
+    PostCommentReply,
     PostCommentStatus,
     PostLike, 
     Team,
@@ -67,6 +68,12 @@ class TeamViewSet(viewsets.ViewSet):
         elif self.action == 'reply_comment':
             permission_classes = [IsAuthenticated]
         elif self.action == 'delete_comment':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'hide_or_unhide_comment':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'delete_reply':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'hide_or_unhide_reply':
             permission_classes = [IsAuthenticated]
 
         return [permission() for permission in permission_classes]
@@ -143,16 +150,18 @@ class TeamViewSet(viewsets.ViewSet):
         serializer = TeamPlayerSerializerService.serialize_player_career_stats(stats)
         return Response(serializer.data)
     
-    @method_decorator(cache_page(60*60*24))
     @action(
         detail=True, 
         methods=['get'], 
         url_path=r'players/(?P<player_id>[^/.]+)/season-stats'
     )
     def get_specific_player_season_stats(self, request, pk=None, player_id=None):
-        player = TeamPlayerService.get_team_player_with_season_stats(player_id)
-        serializer = TeamPlayerSerializerService.serialize_player_for_season_stats(player)
-        return Response(serializer.data['season_stats'])
+        season_stats = TeamPlayerService.get_team_player_with_season_stats(player_id)
+        if not season_stats:
+            return Response({})
+
+        serializer = TeamPlayerSerializerService.serialize_player_for_season_stats(season_stats)
+        return Response(serializer.data)
 
     @method_decorator(cache_page(60*10)) 
     @action(
@@ -382,8 +391,6 @@ class TeamViewSet(viewsets.ViewSet):
             PostService.hide_post(post_id, request.user)
             message = 'Post hidden successfully!'
 
-        print(message)
-
         return Response(
             {'message': message},
             status=HTTP_200_OK
@@ -530,9 +537,51 @@ class TeamViewSet(viewsets.ViewSet):
     
     @like_comment.mapping.delete
     def unlike_comment(self, request, pk=None, post_id=None, comment_id=None):
-        comment = PostService.unlike_comment(request, pk, post_id, comment_id)
+        try:
+            comment = PostService.unlike_comment(request, pk, post_id, comment_id)
+        except CustomError as e:
+            return Response({'error': e.message}, status=e.code)
+
         serializer = PostSerializerService.serialize_comment_after_like(comment) 
         return Response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments/(?P<comment_id>[^/.]+)/hidden'
+    )
+    def hide_or_unhide_comment(self, request, pk=None, post_id=None, comment_id=None):
+        try:
+            comment = PostComment.objects.get(
+                post__id=post_id, 
+                id=comment_id, 
+                post__team__id=pk,
+                status__name='created'
+            )
+        except PostComment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        if comment.user == request.user:
+            return Response(
+                {'error': 'You cannot hide your own comment'}, 
+                status=HTTP_400_BAD_REQUEST
+            )
+
+        try: 
+            is_comment_hidden = PostService.check_if_comment_hidden(comment_id, request.user)
+            if is_comment_hidden:
+                PostService.unhide_comment(comment_id, request.user)
+                message = 'Comment unhidden successfully!'
+            else:
+                PostService.hide_comment(comment_id, request.user)
+                message = 'Comment hidden successfully!'
+        except CustomError as e:
+            return Response({'error': e.message}, status=e.code)
+
+        return Response(
+            {'message': message},
+            status=HTTP_200_OK
+        )
     
     @like_comment.mapping.get
     def get_likes(self, request, pk=None, post_id=None, comment_id=None):
@@ -578,15 +627,89 @@ class TeamViewSet(viewsets.ViewSet):
         except PostComment.DoesNotExist:
             return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
         
-        replies = PostService.get_comment_replies(comment_id)
+        replies = PostService.get_comment_replies(comment_id, request.user)
 
         pagination = CustomPageNumberPagination()
         paginated_data = pagination.paginate_queryset(replies, request)
 
         serializer = PostSerializerService.serialize_comment_replies(paginated_data)
         return pagination.get_paginated_response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['delete'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments/(?P<comment_id>[^/.]+)/replies/(?P<reply_id>[^/.]+)'
+    )
+    def delete_reply(self, request, pk=None, post_id=None, comment_id=None, reply_id=None):
+        try:
+            PostCommentReply.objects.get(
+                post_comment__post__id=post_id,
+                post_comment__id=comment_id,
+                id=reply_id,
+                user=request.user
+            )
+        except PostCommentReply.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
 
+        try: 
+            PostService.delete_reply(request.user, reply_id)
+        except CustomError as e:
+            return Response({'error': e.message}, status=e.code)
+        except Exception as e:
+            return Response({'error': 'An error occurred'}, status=HTTP_500_INTERNAL_SERVER_ERROR)
 
+        return Response(
+            {'message': 'Reply deleted successfully!'}, 
+            status=HTTP_200_OK
+        )
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'posts/(?P<post_id>[^/.]+)/comments/(?P<comment_id>[^/.]+)/replies/(?P<reply_id>[^/.]+)/hidden'
+    )
+    def hide_or_unhide_reply(
+        self, 
+        request, 
+        pk=None, 
+        post_id=None, 
+        comment_id=None, 
+        reply_id=None
+    ):
+        try:
+            reply = PostCommentReply.objects.get(
+                post_comment__post__id=post_id,
+                post_comment__id=comment_id,
+                id=reply_id,
+                status__name='created'
+            )
+        except PostCommentReply.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=HTTP_404_NOT_FOUND)
+        
+        if reply.user == request.user:
+            return Response(
+                {'error': 'You cannot hide your own reply'}, 
+                status=HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            is_reply_hidden = PostService.check_if_reply_hidden(reply_id, request.user)
+            if is_reply_hidden:
+                PostService.unhide_reply(reply_id, request.user)
+                message = 'Reply unhidden successfully!'
+            else:
+                PostService.hide_reply(reply_id, request.user)
+                message = 'Reply hidden successfully!'
+        except CustomError as e:
+            return Response({'error': e.message}, status=e.code)
+        except Exception as e:
+            return Response({'error': 'An error occurred'}, status=HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(
+            {'message': message},
+            status=HTTP_200_OK
+        )
+    
 class TeamsPostViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='top-5')
     def get_today_top_5_popular_posts(self, request):
