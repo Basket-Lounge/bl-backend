@@ -449,7 +449,6 @@ class PostManagementViewSet(viewsets.ViewSet):
             status=HTTP_200_OK
         )
     
-
 class UserManagementViewSet(viewsets.ViewSet):
     authentication_classes = [CookieJWTAdminAccessAuthentication]
     permission_classes = [IsAuthenticated]
@@ -571,7 +570,11 @@ class UserManagementViewSet(viewsets.ViewSet):
     
     @update_user_comment.mapping.delete
     def delete_user_comment(self, request, pk=None, comment_id=None):
-        PostService.delete_comment(pk, comment_id)
+        try:
+            PostService.delete_comment(request.user, comment_id)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+
         return Response(status=HTTP_200_OK)
     
     @action(
