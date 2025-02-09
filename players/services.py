@@ -4,6 +4,10 @@ from teams.models import Team
 from nba_api.stats.endpoints.playerindex import PlayerIndex
 from nba_api.stats.endpoints.playercareerstats import PlayerCareerStats
 
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 def register_players_to_database():
     '''
@@ -114,7 +118,7 @@ def add_career_stats_to_players():
                 per_mode36='PerGame'
             ).get_dict()['resultSets'][0]
         except Exception as e:
-            print("Error fetching career stats for player", player.id, e)
+            logging.info(f"Error fetching career stats for player {player.id}")
             continue
 
         headers = career_stats['headers']
@@ -125,34 +129,63 @@ def add_career_stats_to_players():
 
         stats_dict = [dict(zip(headers, season_stats)) for season_stats in stats]
 
-        PlayerCareerStatistics.objects.bulk_create([
-            PlayerCareerStatistics(
+        for season_stats in stats_dict:
+            logging.info(f"Adding career stats for player {player.id}, {player.last_name} {player.first_name} season {season_stats['SEASON_ID']}")
+            PlayerCareerStatistics.objects.update_or_create(
                 player=player,
                 team=Team.objects.get(id=season_stats['TEAM_ID']) if season_stats['TEAM_ID'] != 0 else None,
                 season_id=season_stats['SEASON_ID'],
-                player_age=season_stats['PLAYER_AGE'],
-                games_played=season_stats['GP'],
-                games_started=season_stats['GS'],
-                minutes=season_stats['MIN'],
-                field_goals_made=season_stats['FGM'],
-                field_goals_attempted=season_stats['FGA'],
-                field_goals_percentage=season_stats['FG_PCT'],
-                three_point_field_goals_made=season_stats['FG3M'],
-                three_point_field_goals_attempted=season_stats['FG3A'],
-                three_point_field_goals_percentage=season_stats['FG3_PCT'],
-                free_throws_made=season_stats['FTM'],
-                free_throws_attempted=season_stats['FTA'],
-                free_throws_percentage=season_stats['FT_PCT'],
-                rebounds_offensive=season_stats['OREB'],
-                rebounds_defensive=season_stats['DREB'],
-                rebounds_total=season_stats['REB'],
-                assists=season_stats['AST'],
-                steals=season_stats['STL'],
-                blocks=season_stats['BLK'],
-                turnovers=season_stats['TOV'],
-                personal_fouls=season_stats['PF'],
-                points=season_stats['PTS']
-            ) for season_stats in stats_dict
-        ])
+                defaults={
+                    'player_age': season_stats['PLAYER_AGE'],
+                    'games_played': season_stats['GP'],
+                    'games_started': season_stats['GS'],
+                    'minutes': season_stats['MIN'],
+                    'field_goals_made': season_stats['FGM'],
+                    'field_goals_attempted': season_stats['FGA'],
+                    'field_goals_percentage': season_stats['FG_PCT'],
+                    'three_point_field_goals_made': season_stats['FG3M'],
+                    'three_point_field_goals_attempted': season_stats['FG3A'],
+                    'three_point_field_goals_percentage': season_stats['FG3_PCT'],
+                    'free_throws_made': season_stats['FTM'],
+                    'free_throws_attempted': season_stats['FTA'],
+                    'free_throws_percentage': season_stats['FT_PCT'],
+                    'rebounds_offensive': season_stats['OREB'],
+                    'rebounds_defensive': season_stats['DREB'],
+                    'rebounds_total': season_stats['REB'],
+                    'assists': season_stats['AST'],
+                    'steals': season_stats['STL'],
+                    'blocks': season_stats['BLK'],
+                    'turnovers': season_stats['TOV'],
+                    'personal_fouls': season_stats['PF'],
+                    'points': season_stats['PTS']
+                },
+                create_defaults={
+                    'player': player,
+                    'team': Team.objects.get(id=season_stats['TEAM_ID']) if season_stats['TEAM_ID'] != 0 else None,
+                    'season_id': season_stats['SEASON_ID'],
+                    'player_age': season_stats['PLAYER_AGE'],
+                    'games_played': season_stats['GP'],
+                    'games_started': season_stats['GS'],
+                    'minutes': season_stats['MIN'],
+                    'field_goals_made': season_stats['FGM'],
+                    'field_goals_attempted': season_stats['FGA'],
+                    'field_goals_percentage': season_stats['FG_PCT'],
+                    'three_point_field_goals_made': season_stats['FG3M'],
+                    'three_point_field_goals_attempted': season_stats['FG3A'],
+                    'three_point_field_goals_percentage': season_stats['FG3_PCT'],
+                    'free_throws_made': season_stats['FTM'],
+                    'free_throws_attempted': season_stats['FTA'],
+                    'free_throws_percentage': season_stats['FT_PCT'],
+                    'rebounds_offensive': season_stats['OREB'],
+                    'rebounds_defensive': season_stats['DREB'],
+                    'rebounds_total': season_stats['REB'],
+                    'assists': season_stats['AST'],
+                    'steals': season_stats['STL'],
+                    'blocks': season_stats['BLK'],
+                    'turnovers': season_stats['TOV'],
+                    'personal_fouls': season_stats['PF'],
+                    'points': season_stats['PTS']
+                }
+            )
 
-        print(f"Updated player {player.id}, {player.last_name} {player.first_name}")
+        logging.info(f"Added career stats for player {player.id}, {player.last_name} {player.first_name}")

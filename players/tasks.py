@@ -5,6 +5,7 @@ from django.db import transaction
 from nba_api.stats.endpoints.leagueleaders import LeagueLeaders
 
 from players.models import PlayerRanking
+from players.services import add_career_stats_to_players
 
 
 @shared_task
@@ -28,3 +29,7 @@ def update_top_10_players():
                 ranking=index + 1,
                 player_id=top_10[index][0],
             )
+
+@shared_task
+def update_player_career_stats():
+    add_career_stats_to_players()

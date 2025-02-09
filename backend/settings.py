@@ -392,6 +392,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=0, hour=5),
         "options": {"queue": "low_priority"},
     },
+    "update_player_career_stats": {
+        "task": "players.tasks.update_player_career_stats",
+        "schedule": crontab(minute=0, hour=5),
+        "options": {"queue": "low_priority"},
+    },
 }
 
 ## Cache settings
