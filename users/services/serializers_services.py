@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List
 from api.exceptions import BadRequestError
 from api.websocket import broadcast_message_to_centrifuge, send_message_to_centrifuge
 from management.models import (
@@ -9,11 +10,12 @@ from management.serializers import (
     InquiryMessageCreateSerializer, 
     InquirySerializer
 )
-from users.models import User, UserChat, UserChatParticipant, UserChatParticipantMessage
+from users.models import Block, User, UserChat, UserChatParticipant, UserChatParticipantMessage
 
 from django.db.models.manager import BaseManager
 
 from users.serializers import (
+    BlockSerializer,
     PostCommentSerializer, 
     UserChatParticipantMessageCreateSerializer, 
     UserChatParticipantMessageSerializer, 
@@ -187,6 +189,34 @@ class UserSerializerService:
             user,
             fields=['id', 'likes_count', 'liked']
         )
+    
+    @staticmethod
+    def serialize_blocked_users(blocked_users: BaseManager[Block] | List[Block]) -> List[dict]:
+        """
+        Serialize a list of blocked users.
+
+        Args:
+            - blocked_users: The list of blocked users to serialize.
+        
+        Returns:
+            - A list of dictionaries containing the serialized data.
+        """
+        serializer = BlockSerializer(
+            blocked_users,
+            many=True,
+            fields=['blocked_user_data'],
+            context={
+                'blocked_user': {
+                    'fields': ['id', 'username']
+                }
+            }
+        )
+
+        data = []
+        for block in serializer.data:
+            data.append(block['blocked_user_data'])
+
+        return data
 
 class UserChatSerializerService:
     @staticmethod
