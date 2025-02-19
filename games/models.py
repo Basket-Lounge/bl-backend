@@ -131,11 +131,12 @@ class GameChat(models.Model):
     )
     slow_mode = models.BooleanField(default=False)
     slow_mode_time = models.PositiveIntegerField(default=0)
+    mute_mode = models.BooleanField(default=False)
+    mute_until = models.DateTimeField(null=True, blank=True)
     
     def __str__(self):
         return f'Chat {self.id}'
     
-
 class GameChatMessage(models.Model):
     id = models.UUIDField(
         primary_key=True, 
@@ -158,7 +159,6 @@ class GameChatMessage(models.Model):
     def __str__(self):
         return f'{self.user} in {self.chat}'
     
-
 class GameChatMute(models.Model):
     id = models.UUIDField(
         primary_key=True, 
@@ -174,11 +174,23 @@ class GameChatMute(models.Model):
         'users.User', 
         on_delete=models.CASCADE
     )
+    message = models.ForeignKey(GameChatMessage, on_delete=models.CASCADE, null=True, blank=True)
+    reason = models.TextField(default='No reason provided')
+    disabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    mute_until = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f'{self.user} in {self.chat} muted'
     
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'], 
+                condition=models.Q(disabled=False),
+                name='unique_chat_mute'
+            )
+        ]
 
 class GameChatBan(models.Model):
     id = models.UUIDField(
@@ -186,14 +198,38 @@ class GameChatBan(models.Model):
         default=uuid.uuid4, 
         editable=False
     )
+    chat = models.ForeignKey(
+        GameChat,
+        on_delete=models.CASCADE,
+        related_name='bans',
+        null=True
+    )
     user = models.ForeignKey(
         'users.User', 
         on_delete=models.CASCADE
     )
+    message = models.ForeignKey(
+        GameChatMessage,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+    disabled = models.BooleanField(default=False)
+    reason = models.TextField(default='No reason provided')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'], 
+                condition=models.Q(disabled=False),
+                name='unique_chat_ban'
+            )
+        ]
 
     def __str__(self):
         return f'{self.user}'
+
 
 class GamePrediction(models.Model):
     id = models.UUIDField(

@@ -2,13 +2,14 @@ from datetime import datetime, timedelta
 from typing import List
 import pytz
 
+from api.exceptions import NotFoundError
 from api.websocket import send_message_to_centrifuge
-from games.models import Game, GameChat, GameChatMessage, LineScore, TeamStatistics
+from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute, LineScore, TeamStatistics
 
 from django.db.models import Prefetch, Q
 from django.db.models.manager import BaseManager
 
-from games.serializers import GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
+from games.serializers import GameChatBanSerializer, GameChatSerializer, GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
 from players.models import Player, PlayerStatistics
 from teams.models import TeamLike, TeamName, Team
 
@@ -18,6 +19,7 @@ from rest_framework.status import (
     HTTP_500_INTERNAL_SERVER_ERROR
 )
 from typing import Tuple
+from users.models import User
 from users.utils import validate_websocket_subscription_token
 
 
@@ -508,7 +510,99 @@ class GameService:
         )
 
         return True, None, None
+    
+class GameChatService:
+    @staticmethod
+    def get_game_chat(pk):
+        return GameChat.objects.filter(
+            game__game_id=pk
+        ).select_related(
+            'game'
+        ).only(
+            'game__game_id',
+            'game__game_status_id',
+            'id',
+            'slow_mode',
+            'slow_mode_time',
+        ).first()
+    
+    @staticmethod
+    def get_game_chat_messages(pk):
+        try:
+            game = Game.objects.get(game_id=pk)
+        except Game.DoesNotExist:
+            return None
+        
+        return GameChatMessage.objects.filter(chat__game=game).select_related('user').order_by('created_at')
+    
+    @staticmethod
+    def block_user(pk: str, user: User, user_id: str) -> None:
+        """
+        Allow a user to block/unblock another user in a game chat.
 
+        Args:
+            - pk (str): game id
+            - user (User): user who is blocking/unblocking
+            - user_id (str): user id of the user to block/unblock
+
+        Returns:
+            - None
+        """
+        try:
+            game_chat = GameChat.objects.get(game__game_id=pk)
+        except GameChat.DoesNotExist:
+            raise NotFoundError()
+        
+    @staticmethod
+    def create_game_chat_message(request, pk):
+        channel = f'games/{pk}/live-chat'
+
+        subscription_token = request.data.get('subscription_token', None)
+        if subscription_token is None:
+            return False, {'error': 'Subscription token is required'}, HTTP_400_BAD_REQUEST
+
+        if not validate_websocket_subscription_token(
+            subscription_token, 
+            channel, 
+            request.user.id
+        ):
+            return False, {'error': 'Invalid subscription token'}, HTTP_400_BAD_REQUEST
+
+        message = request.data.get('message', None)
+        if message is None:
+            return False, {'error': 'Message is required'}, HTTP_400_BAD_REQUEST
+
+        try:
+            game = Game.objects.get(game_id=pk)
+        except Game.DoesNotExist:
+            return False, {'error': 'Game not found'}, HTTP_404_NOT_FOUND
+        
+        user_favorite_team = TeamLike.objects.filter(
+            user=request.user,
+            favorite=True,
+        ).select_related('team').first()
+        
+        resp_json = send_message_to_centrifuge(channel, {
+            'message': message,
+            'user': {
+                'id': request.user.id,
+                'username': request.user.get_username(),
+                'favorite_team': user_favorite_team.team.symbol if user_favorite_team else None
+            },
+            'game': game.game_id,
+            'created_at': int(datetime.now().timestamp())
+        })
+        if resp_json.get('error', None):
+            return False, {'error': 'Message Delivery Unsuccessful'}, HTTP_500_INTERNAL_SERVER_ERROR
+        
+        game_chat, created = GameChat.objects.get_or_create(game=game)
+        GameChatMessage.objects.create(
+            chat=game_chat,
+            message=message,
+            user=request.user
+        )
+
+        return True, None, None
 
 class GameSerializerService:
     @staticmethod
@@ -590,4 +684,10 @@ class GameSerializerService:
                 'player': {'fields': ('id', 'first_name', 'last_name')},
                 'team': {'fields': ('id',)},
             }
+        )
+    
+class GameChatSerializerService:
+    def serialize_game_chat(game_chat: GameChat) -> GameChatSerializer:
+        return GameChatSerializer(
+            game_chat,
         )

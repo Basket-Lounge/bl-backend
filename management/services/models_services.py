@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 from typing import List, Union
 import uuid
+
+from django.db import IntegrityError
 from api.exceptions import BadRequestError
+from games.models import Game, GameChat, GameChatBan, GameChatMute
 from management.models import (
     Inquiry, 
     InquiryMessage, 
@@ -32,7 +35,7 @@ from teams.models import (
     TeamLike,
     TeamName
 )
-from users.models import User, UserChat, UserChatParticipant, UserLike
+from users.models import Block, User, UserChat, UserChatParticipant, UserLike
 from users.services.models_services import create_user_queryset_without_prefetch
 
 from django_cte import With
@@ -965,3 +968,230 @@ class UserManagementService:
         ])
 
         return True, None, None
+    
+class GameManagementService:
+    @staticmethod
+    def check_game_exists(pk):
+        return Game.objects.filter(game_id=pk).exists()
+
+    @staticmethod
+    def check_user_is_banned_from_game_chat(
+        game_id: str, 
+        user_id: int
+    ) -> bool:
+        return GameChatBan.objects.filter(
+            chat__game__game_id=game_id,
+            user__id=user_id
+        ).exists()
+    
+    @staticmethod
+    def check_user_is_muted_from_game_chat(
+        game_id: str, 
+        user_id: int
+    ) -> bool:
+        return GameChatMute.objects.filter(
+            chat__game__game_id=game_id,
+            user__id=user_id,
+            disabled=False,
+        ).exists()
+
+    @staticmethod
+    def ban_user_from_game_chat(
+        game_chat: GameChat,
+        user: User,
+        reason: str | None
+    ) -> None:
+        try:
+            ban = GameChatBan.objects.create(
+                chat=game_chat,
+                user=user,
+            )
+
+            if reason and type(reason) == str:
+                ban.reason = reason
+                ban.save()
+        except IntegrityError:
+            raise BadRequestError('User is already banned from the game chat.')
+
+    @staticmethod
+    def unban_user_from_game_chat(
+        game_chat: GameChat,
+        user: User
+    ) -> None:
+        GameChatBan.objects.filter(
+            chat=game_chat,
+            user=user
+        ).update(disabled=True)
+
+    @staticmethod
+    def mute_game_chat(
+        game_chat: GameChat,
+        mute_until: datetime | None
+    ) -> None:
+        game_chat.mute_mode = True
+        if (
+            mute_until and
+            type(mute_until) == datetime and
+            mute_until > datetime.now(timezone.utc)
+        ):
+            game_chat.mute_until = mute_until
+
+        game_chat.save()
+
+    @staticmethod
+    def unmute_game_chat(
+        game_chat: GameChat
+    ) -> None:
+        game_chat.mute_mode = False
+        game_chat.mute_until = None
+        game_chat.save()
+
+    @staticmethod
+    def update_mute_mode_game_chat(
+        game_chat: GameChat,
+        mute_mode: bool,
+        mute_until: datetime | None = None
+    ) -> None:
+        if type(mute_mode) != bool:
+            raise BadRequestError('Invalid mute mode value.')
+    
+        if not type(mute_until) == datetime and mute_until != None:
+            raise BadRequestError('Invalid mute until value.')
+        
+        if mute_until and mute_until < datetime.now(timezone.utc):
+            raise BadRequestError('Invalid mute until value.')
+        
+        game_chat.mute_mode = mute_mode
+        game_chat.mute_until = mute_until
+        game_chat.save()
+
+    @staticmethod
+    def mute_user_from_game_chat(
+        game_chat: GameChat,
+        user: User,
+        reason: str | None,
+        mute_until: datetime | None
+    ) -> None:
+        try:
+            mute = GameChatMute.objects.create(
+                chat=game_chat,
+                user=user,
+                mute_until=mute_until
+            )
+        except IntegrityError:
+            raise BadRequestError('User is already muted from the game chat.')
+        
+        if reason and type(reason) == str:
+            mute.reason = reason
+
+        if (
+            mute_until and 
+            type(mute_until) == datetime and 
+            mute_until > datetime.now(timezone.utc)
+        ):
+            mute.mute_until = mute_until
+
+        mute.save()
+
+    @staticmethod
+    def unmute_user_from_game_chat(
+        game_chat: GameChat,
+        user: User
+    ) -> None:
+        GameChatMute.objects.filter(
+            chat=game_chat,
+            user=user
+        ).update(disabled=True)
+
+    @staticmethod
+    def update_slow_mode(
+        game_chat: GameChat,
+        slow_mode: bool,
+        slow_mode_time: int | None
+    ) -> None:
+        """
+        Update slow mode settings of a game chat.
+
+        Args:
+            - game_chat: GameChat object.
+            - slow_mode: boolean.
+            - slow_mode_time: how many seconds a user has to wait before sending another message.
+        
+        Returns:
+            - None
+        """
+        if type(slow_mode) != bool:
+            raise BadRequestError('Invalid slow mode value.')
+
+        if slow_mode:
+            if not type(slow_mode_time) == int or slow_mode_time <= 0:
+                raise BadRequestError('Invalid slow mode time.')
+        else:
+            slow_mode_time = 0
+
+        game_chat.slow_mode = slow_mode
+        game_chat.slow_mode_time = slow_mode_time
+        game_chat.save()
+
+    @staticmethod
+    def get_game_chat_with_id_only(pk: str) -> GameChat | None:
+        return GameChat.objects.filter(
+            game__game_id=pk
+        ).only(
+            'id'
+        ).first()
+
+    @staticmethod
+    def get_game_chat(pk: str) -> GameChat:
+        return GameChat.objects.filter(
+            game__game_id=pk
+        ).select_related(
+            'game'
+        ).only(
+            'game__game_id',
+            'game__game_status_id',
+            'id',
+            'slow_mode',
+            'slow_mode_time',
+            'mute_until'
+        ).first()
+    
+    @staticmethod
+    def get_banned_users(game_id: str) -> BaseManager[GameChatBan]:
+        return GameChatBan.objects.filter(
+            chat__game__game_id=game_id,
+            disabled=False
+        ).select_related(
+            'user',
+            'chat__game',
+            'message'
+        ).only(
+            'user__id',
+            'user__username',
+            'chat__game__game_id',
+            'message__message',
+            'message__created_at',
+            'message__updated_at',
+            'reason',
+            'created_at',
+        )
+    
+    @staticmethod
+    def get_muted_users(game_id: str) -> BaseManager[GameChatMute]:
+        return GameChatMute.objects.filter(
+            chat__game__game_id=game_id,
+            disabled=False
+        ).select_related(
+            'user',
+            'chat__game'
+        ).only(
+            'user__id',
+            'user__username',
+            'chat__game__game_id',
+            'message__message',
+            'message__created_at',
+            'message__updated_at',
+            'reason',
+            'created_at',
+            'mute_until'
+        )

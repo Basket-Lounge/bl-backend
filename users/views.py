@@ -102,6 +102,10 @@ class UserViewSet(ViewSet):
         permission_classes = []
         if self.action == 'retrieve':
             permission_classes = [AllowAny]
+        elif self.action == 'block_user':
+            permission_classes = [IsAuthenticated]
+        elif self.action == 'get_blocked_users':
+            permission_classes = [IsAuthenticated]
         elif self.action == 'post_favorite_team':
             permission_classes = [IsAuthenticated]
         elif self.action == 'delete_favorite_team':
@@ -191,6 +195,34 @@ class UserViewSet(ViewSet):
 
         serializer = UserSerializerService.serialize_another_user(user, request.user)
         return Response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path='block',
+    )
+    def block_user(self, request, pk=None):
+        user = UserService.get_user_with_liked_only(pk, request.user)
+        if not user:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        user_blocked = UserService.check_user_blocked(request.user, user)
+        if user_blocked:
+            UserService.unblock_user(request.user, user)
+            return Response(status=HTTP_200_OK)
+
+        UserService.block_user(request.user, user)
+        return Response(status=HTTP_201_CREATED)
+    
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='me/blocked-users',
+    )
+    def get_blocked_users(self, request):
+        blocked_users = UserService.get_user_blocks(request.user)
+        users_list = UserSerializerService.serialize_blocked_users(blocked_users)
+        return Response(users_list)
     
     @action(
         detail=True,

@@ -12,7 +12,7 @@ from management.models import Inquiry, InquiryMessage, InquiryModerator, Inquiry
 from notification.models import Notification, NotificationRecipient, NotificationTemplate
 from notification.services.models_services import NotificationService
 from teams.models import Language, Post, PostComment, PostCommentStatus, PostStatus, Team, TeamLike, TeamName
-from users.models import Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
+from users.models import Block, Role, User, UserChat, UserChatParticipant, UserChatParticipantMessage, UserLike
 from users.services.models_services import UserChatService
 from users.views import JWTViewSet, UserViewSet
 
@@ -85,6 +85,13 @@ class UserAPIEndpointTestCase(APITestCase):
         )
         regular_user.set_password('testpassword')
         regular_user.save()
+
+        regular_user_2 = User.objects.create(
+            username="testuserrandom",
+            email="testrrandom@test.com",
+        )
+        regular_user_2.set_password('testpassword')
+        regular_user_2.save()
 
         admin_user = User.objects.create(
             username='testadmin', 
@@ -288,6 +295,80 @@ class UserAPIEndpointTestCase(APITestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(user_favorite_teams_count, 1)
+
+    def test_block_user(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'patch': 'block_user'})
+
+        user_to_block = User.objects.filter(username='testuserrandom').first()
+        if not user_to_block:
+            self.fail("User not found")
+
+        # test an anonymous user
+        request = factory.patch(
+            f'/api/users/{user_to_block.id}/block/',
+        )
+        response = view(request, pk=user_to_block.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request, pk=user_to_block.id)
+        self.assertEqual(response.status_code, 201)
+
+        block_exists = Block.objects.filter(
+            user=user,
+            blocked_user=user_to_block
+        ).exists()
+        self.assertTrue(block_exists)
+
+        # Unblock the user
+        response = view(request, pk=user_to_block.id)
+        self.assertEqual(response.status_code, 200)
+
+        block_exists = Block.objects.filter(
+            user=user,
+            blocked_user=user_to_block
+        ).exists()
+        self.assertFalse(block_exists)
+
+    def test_get_blocked_users(self):
+        user = User.objects.filter(username='testuser').first()
+        if not user:
+            self.fail("User not found")
+
+        factory = APIRequestFactory()
+        view = UserViewSet.as_view({'get': 'get_blocked_users'})
+
+        # test an anonymous user
+        request = factory.get(
+            f'/api/users/me/blocked-users/'
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 401)
+
+        # test a regular user
+        force_authenticate(request, user=user)
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [])
+
+        user_to_block = User.objects.filter(username='testuserrandom').first()
+        if not user_to_block:
+            self.fail("User not found")
+
+        Block.objects.create(
+            user=user,
+            blocked_user=user_to_block
+        )
+        response = view(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['username'], 'testuserrandom')
 
     def test_like_or_unlike_team(self):
         user = User.objects.filter(username='testuser').first()

@@ -1,10 +1,11 @@
 from rest_framework import serializers
 
 from api.mixins import DynamicFieldsSerializerMixin
-from games.models import Game, LineScore, TeamStatistics
+from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute, LineScore, TeamStatistics
 from players.models import PlayerCareerStatistics, PlayerStatistics
 from players.serializers import PlayerSerializer
 from teams.serializers import TeamSerializer
+from users.serializers import UserSerializer
 
 
 class LineScoreSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
@@ -117,7 +118,154 @@ class GameSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
             **context
         )
         return serializer.data
+    
+class GameChatSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    game_data = serializers.SerializerMethodField()
 
+    class Meta:
+        model = GameChat
+        exclude = ('game',)
+
+    def get_game_data(self, obj):
+        if not hasattr(obj, 'game'):
+            return None
+        
+        context = self.context.get('game', {})
+        serializer = GameSerializer(
+            obj.game,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+class GameChatMessageSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    chat_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GameChatMessage
+        exclude = ('chat', 'user')
+
+    def get_chat_data(self, obj):
+        if not hasattr(obj, 'chat'):
+            return None
+        
+        context = self.context.get('chat', {})
+        serializer = GameChatSerializer(
+            obj.chat,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+class GameChatBanSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    chat_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    message_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GameChatBan
+        exclude = ('chat', 'user', 'message')
+
+    def get_chat_data(self, obj):
+        if not hasattr(obj, 'chat'):
+            return None
+        
+        context = self.context.get('chat', {})
+        serializer = GameChatSerializer(
+            obj.chat,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+    def get_message_data(self, obj):
+        if not hasattr(obj, 'message'):
+            return None
+
+        if obj.message is None:
+            return None
+
+        context = self.context.get('message', {})
+        serializer = GameChatMessageSerializer(
+            obj.message,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+class GameChatMuteSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
+    chat_data = serializers.SerializerMethodField()
+    user_data = serializers.SerializerMethodField()
+    message_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GameChatMute
+        exclude = ('chat', 'user', 'message')
+
+    def get_chat_data(self, obj):
+        if not hasattr(obj, 'chat'):
+            return None
+        
+        context = self.context.get('chat', {})
+        serializer = GameChatSerializer(
+            obj.chat,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+    def get_user_data(self, obj):
+        if not hasattr(obj, 'user'):
+            return None
+        
+        context = self.context.get('user', {})
+        serializer = UserSerializer(
+            obj.user,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+    
+    def get_message_data(self, obj):
+        if not hasattr(obj, 'message'):
+            return None
+        
+        if obj.message is None:
+            return None
+        
+        context = self.context.get('message', {})
+        serializer = GameChatMessageSerializer(
+            obj.message,
+            context=self.context,
+            **context
+        )
+        return serializer.data
+        
 
 class TeamStatisticsSerializer(DynamicFieldsSerializerMixin, serializers.ModelSerializer):
     team = serializers.SerializerMethodField()

@@ -1,6 +1,7 @@
 from django.urls import include, path
 from games.views import GameViewSet
 from management.views import (
+    GameManagementViewSet,
     InquiryModeratorViewSet, 
     InquiryViewSet, 
     JWTAdminSubscriptionViewSet, 
@@ -32,6 +33,7 @@ router.register(r'admin/inquiries', InquiryModeratorViewSet, basename='admin_inq
 router.register(r'admin/reports', ReportAdminViewSet, basename='admin_report')
 router.register(r'admin/users', UserManagementViewSet, basename='admin_user')
 router.register(r'admin/posts', PostManagementViewSet, basename='admin_post')
+router.register(r'admin/games', GameManagementViewSet, basename='admin_game')
 
 urlpatterns = [
     path('', include(router.urls)),

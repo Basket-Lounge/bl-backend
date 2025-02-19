@@ -18,6 +18,7 @@ from teams.models import (
     TeamName
 )
 from users.models import (
+    Block,
     User, 
     UserChat,
     UserChatParticipant, 
@@ -346,6 +347,32 @@ def create_inquiry_queryset_without_prefetch_for_user(
 
 class UserService:
     @staticmethod
+    def check_user_exists(user_id: int) -> bool:
+        """
+        Check if a user exists.
+
+        Args:
+            - user_id (int): The id of the user.
+
+        Returns:
+            - bool: True if the user exists, False otherwise.
+        """
+        return User.objects.filter(id=user_id).exists()
+    
+    @staticmethod
+    def get_user_with_id_only(user_id: int) -> User | None:
+        """
+        Get a user with the attribute of "id".
+
+        Args:
+            - user_id (int): The id of the user to get.
+
+        Returns:
+            - User | None: The user object.
+        """
+        return User.objects.filter(id=user_id).only('id').first()
+
+    @staticmethod
     def get_user_with_liked_only(user_id: int, requesting_user: User = None) -> User | None:
         """
         Get a user with the attribute of "id" and "liked".
@@ -379,7 +406,6 @@ class UserService:
             )
         ).first()
     
-
     @staticmethod
     def get_user_with_liked_by_id(user_id: int, requesting_user: User = None) -> User | None:
         """
@@ -449,6 +475,61 @@ class UserService:
         """
 
         UserLike.objects.filter(user=user, liked_user=user_to_unlike).delete()
+
+    @staticmethod
+    def check_user_blocked(user: User, user_to_check: User) -> bool:
+        """
+        Check if a user is blocked by another user.
+
+        Args:
+            - user (User): The user that is blocking.
+            - user_to_check (User): The user that is being checked.
+
+        Returns:
+            - bool: True if the user is blocked, False otherwise.
+        """
+        return Block.objects.filter(user=user, blocked_user=user_to_check).exists()
+    
+    @staticmethod
+    def block_user(user: User, user_to_block: User) -> None:
+        """
+        Block a user.
+
+        Args:
+            - user (User): The user that is blocking.
+            - user_to_block (User): The user that is being blocked.
+
+        Returns:
+            - None
+        """
+        Block.objects.get_or_create(user=user, blocked_user=user_to_block)
+
+    @staticmethod
+    def unblock_user(user: User, user_to_unblock: User) -> None:
+        """
+        Unblock a user.
+
+        Args:
+            - user (User): The user that is unblocking.
+            - user_to_unblock (User): The user that is being unblocked.
+
+        Returns:
+            - None
+        """
+        Block.objects.filter(user=user, blocked_user=user_to_unblock).delete()
+
+    @staticmethod
+    def get_user_blocks(user: User) -> BaseManager[Block]:
+        """
+        Get all blocks of a user.
+
+        Args:
+            - user (User): The user that is blocking.
+
+        Returns:
+            - BaseManager[Block]: The queryset of the blocks.
+        """
+        return Block.objects.filter(user=user)
 
 class UserViewService:
     @staticmethod
@@ -565,7 +646,7 @@ class UserViewService:
             )
 
         return query
-    
+
 
 class UserChatService:
     @staticmethod

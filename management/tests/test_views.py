@@ -1,8 +1,11 @@
+from datetime import datetime, timezone
 from unittest.mock import patch
 from rest_framework.test import APITestCase, APIRequestFactory, force_authenticate
 
+from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute
 from management.models import Inquiry, InquiryMessage, InquiryModerator, InquiryModeratorMessage, InquiryType
-from management.views import InquiryModeratorViewSet
+from management.views import GameManagementViewSet, InquiryModeratorViewSet
+from teams.models import Team
 from users.models import Role, User
 
 
@@ -917,3 +920,582 @@ class InquiryModeratorViewSetTestCase(APITestCase):
                 self.assertEqual(mod['moderator_data']['id'], self.admin1.id)
                 self.assertEqual(mod['last_message'], None)
                 self.assertEqual(mod['unread_other_moderators_messages_count'], 6)
+
+
+class GameManagementViewSetTestCase(APITestCase):
+    def setUp(self):
+        regular_user = User.objects.create(
+            username='testuser', 
+            email="asdf@asdf.com"
+        )
+        regular_user.set_password('testpassword')
+        regular_user.save()
+
+        regular_user2 = User.objects.create(
+            username='testuser2', 
+            email="asdf2@asdf.com"
+        )
+        regular_user2.set_password('testpassword')
+        regular_user2.save()
+
+        admin_user = User.objects.create(
+            username='testadmin', 
+            email="admin@admin.com", 
+            role=Role.get_admin_role()
+        )
+        admin_user.set_password('testadmin')
+        admin_user.save()
+
+        team = Team.objects.all().first()
+        team2 = Team.objects.all().last()
+
+        game = Game.objects.create(
+            game_id='000000000',
+            game_date_est=datetime.now(),
+            game_sequence=1,
+            game_status_id=2,
+            game_status_text='Scheduled',
+            game_code='20241022/NYKBOS',
+            home_team=team,
+            visitor_team=team2,
+            season='2024/25',
+            live_period=1,
+            arena_name='TD Garden',
+        )
+
+        GameChat.objects.create(
+            game=game,
+        )
+
+    def test_get_game_chat(self):
+        game = Game.objects.all().first()
+        if not game:
+            self.fail('No game was created')
+
+        game_chat = GameChat.objects.filter(game=game).first()
+        if not game_chat:
+            self.fail('No game chat was created')
+
+        factory = APIRequestFactory()
+        request = factory.get(f'/api/admin/games/{str(game.game_id)}/chat/')
+        view = GameManagementViewSet.as_view({'get': 'get_game_chat'})
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 401)
+
+        force_authenticate(request, user=User.objects.get(username='testadmin'))
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('game_status_id' in response.data['game_data'])
+        self.assertTrue('id' in response.data)
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_until' in response.data)
+
+        self.assertEqual(response.data['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['game_data']['game_status_id'], game.game_status_id)
+        self.assertEqual(response.data['id'], str(game_chat.id))
+        self.assertEqual(response.data['slow_mode'], False)
+        self.assertEqual(response.data['slow_mode_time'], 0)
+        self.assertEqual(response.data['mute_until'], None)
+
+    def test_get_blocked_users(self):
+        game = Game.objects.all().first()
+        if not game:
+            self.fail('No game was created')
+
+        game_chat = GameChat.objects.filter(game=game).first()
+        if not game_chat:
+            self.fail('No game chat was created')
+
+        factory = APIRequestFactory()
+        request = factory.get(f'/api/admin/games/{str(game.game_id)}/chat/blacklist/')
+        view = GameManagementViewSet.as_view({'get': 'get_blocked_users'})
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 401)
+
+        force_authenticate(request, user=User.objects.get(username='testadmin'))
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('bans' in response.data)
+        self.assertTrue('mutes' in response.data)
+        self.assertEqual(response.data['bans'], [])
+        self.assertEqual(response.data['mutes'], [])
+
+        # Create a ban and a mute
+        ban = GameChatBan.objects.create(
+            chat=game_chat,
+            user=User.objects.get(username='testuser'),
+        )
+
+        mute = GameChatMute.objects.create(
+            chat=game_chat,
+            user=User.objects.get(username='testuser2'),
+        )
+
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('bans' in response.data)
+        self.assertTrue('mutes' in response.data)
+        self.assertEqual(len(response.data['bans']), 1)
+        self.assertEqual(len(response.data['mutes']), 1)
+
+        self.assertTrue('user_data' in response.data['bans'][0])
+        self.assertTrue('chat_data' in response.data['bans'][0])
+        self.assertTrue('message_data' in response.data['bans'][0])
+        self.assertEqual(response.data['bans'][0]['user_data']['username'], 'testuser')
+        self.assertEqual(response.data['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['bans'][0]['message_data'], None)
+
+        self.assertTrue('user_data' in response.data['mutes'][0])
+        self.assertTrue('chat_data' in response.data['mutes'][0])
+        self.assertTrue('message_data' in response.data['mutes'][0])
+        self.assertEqual(response.data['mutes'][0]['user_data']['username'], 'testuser2')
+        self.assertEqual(response.data['mutes'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['mutes'][0]['message_data'], None)
+
+        # disable the mute
+        mute.disabled = True
+        mute.save()
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('bans' in response.data)
+        self.assertTrue('mutes' in response.data)
+        self.assertEqual(len(response.data['bans']), 1)
+        self.assertEqual(len(response.data['mutes']), 0)
+        self.assertTrue('user_data' in response.data['bans'][0])
+        self.assertTrue('chat_data' in response.data['bans'][0])
+        self.assertTrue('message_data' in response.data['bans'][0])
+        self.assertEqual(response.data['bans'][0]['user_data']['username'], 'testuser')
+        self.assertEqual(response.data['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['bans'][0]['message_data'], None)
+
+        # disable the ban
+        ban.disabled = True
+        ban.save()
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('bans' in response.data)
+        self.assertTrue('mutes' in response.data)
+        self.assertEqual(len(response.data['bans']), 0)
+        self.assertEqual(len(response.data['mutes']), 0)
+
+        # Create a message
+        GameChatMessage.objects.create(
+            chat=game_chat,
+            user=User.objects.get(username='testuser'),
+            message='test message',
+        )
+
+        GameChatBan.objects.create(
+            chat=game_chat,
+            user=User.objects.get(username='testuser'),
+            message=GameChatMessage.objects.all().first(),
+        )
+
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('bans' in response.data)
+        self.assertTrue('mutes' in response.data)
+        self.assertEqual(len(response.data['bans']), 1)
+        self.assertEqual(len(response.data['mutes']), 0)
+        self.assertTrue('user_data' in response.data['bans'][0])
+        self.assertTrue('chat_data' in response.data['bans'][0])
+        self.assertTrue('message_data' in response.data['bans'][0])
+        self.assertEqual(response.data['bans'][0]['user_data']['username'], 'testuser')
+        self.assertEqual(response.data['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertTrue('message' in response.data['bans'][0]['message_data'])
+        self.assertTrue('created_at' in response.data['bans'][0]['message_data'])
+        self.assertTrue('updated_at' in response.data['bans'][0]['message_data'])
+        self.assertEqual(response.data['bans'][0]['message_data']['message'], 'test message')
+
+        GameChatMute.objects.create(
+            chat=game_chat,
+            user=User.objects.get(username='testuser2'),
+            message=GameChatMessage.objects.all().first(),
+        )
+
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('bans' in response.data)
+        self.assertTrue('mutes' in response.data)
+        self.assertEqual(len(response.data['bans']), 1)
+        self.assertEqual(len(response.data['mutes']), 1)
+        self.assertTrue('user_data' in response.data['mutes'][0])
+        self.assertTrue('chat_data' in response.data['mutes'][0])
+        self.assertTrue('message_data' in response.data['mutes'][0])
+        self.assertEqual(response.data['mutes'][0]['user_data']['username'], 'testuser2')
+        self.assertEqual(response.data['mutes'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertTrue('message' in response.data['mutes'][0]['message_data'])
+        self.assertTrue('created_at' in response.data['mutes'][0]['message_data'])
+        self.assertTrue('updated_at' in response.data['mutes'][0]['message_data'])
+        self.assertEqual(response.data['mutes'][0]['message_data']['message'], 'test message')
+
+    def test_ban_user(self):
+        game = Game.objects.all().first()
+        if not game:
+            self.fail('No game was created')
+
+        game_chat = GameChat.objects.filter(game=game).first()
+        if not game_chat:
+            self.fail('No game chat was created')
+
+        user = User.objects.get(username='testuser')
+        if not user:
+            self.fail('No user was created')
+
+        admin = User.objects.get(username='testadmin')
+        if not admin:
+            self.fail('No admin was created')
+
+        factory = APIRequestFactory()
+
+        # test with no authentication
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/bans/{str(user.id)}/',
+            data={'reason': 'test reason'},
+            format='json',
+        )
+
+        view = GameManagementViewSet.as_view({'patch': 'ban_user'})
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test with non-existing game
+        request = factory.patch(
+            f'/api/admin/games/000000001/chat/bans/{str(user.id)}/',
+            data={'reason': 'test reason'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk='000000001', user_id=user.id)
+        self.assertEqual(response.status_code, 404)
+
+        # ban the user
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/bans/{str(user.id)}/',
+            data={'reason': 'test reason'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 201)
+
+        ban = GameChatBan.objects.filter(chat=game_chat, user=user, disabled=False).first()
+        self.assertIsNotNone(ban)
+        self.assertEqual(ban.reason, 'test reason')
+
+        # unban the user
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/bans/{str(user.id)}/',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 200)
+
+        ban = GameChatBan.objects.filter(chat=game_chat, user=user, disabled=False).first()
+        self.assertIsNone(ban)
+
+    def test_mute_user(self):
+        game = Game.objects.all().first()
+        if not game:
+            self.fail('No game was created')
+
+        game_chat = GameChat.objects.filter(game=game).first()
+        if not game_chat:
+            self.fail('No game chat was created')
+
+        user = User.objects.get(username='testuser')
+        if not user:
+            self.fail('No user was created')
+
+        admin = User.objects.get(username='testadmin')
+        if not admin:
+            self.fail('No admin was created')
+
+        factory = APIRequestFactory()
+
+        # test with no authentication
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'reason': 'test reason'},
+            format='json',
+        )
+
+        view = GameManagementViewSet.as_view({'patch': 'mute_user'})
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 401)
+
+        # test with non-existing game
+        request = factory.patch(
+            f'/api/admin/games/000000001/chat/mutes/{str(user.id)}/',
+            data={'reason': 'test reason'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk='000000001', user_id=user.id)
+        self.assertEqual(response.status_code, 404)
+
+        # mute the user without the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'reason': 'test reason'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 201)
+
+        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
+        self.assertIsNotNone(mute)
+        self.assertEqual(mute.reason, 'test reason')
+
+        # unmute the user
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 200)
+
+        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
+        self.assertIsNone(mute)
+
+        # mute the user with the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'reason': 'test reason', 'mute_until': 100},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+
+        self.assertEqual(response.status_code, 201)
+        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
+        self.assertIsNotNone(mute)
+        self.assertEqual(mute.reason, 'test reason')
+        self.assertGreater(mute.mute_until, datetime.now(timezone.utc))
+
+        # unmute the user
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 200)
+
+        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
+        self.assertIsNone(mute)
+
+    def test_mute_all_users(self):
+        game = Game.objects.all().first()
+        if not game:
+            self.fail('No game was created')
+
+        game_chat = GameChat.objects.filter(game=game).first()
+        if not game_chat:
+            self.fail('No game chat was created')
+
+        admin = User.objects.get(username='testadmin')
+        if not admin:
+            self.fail('No admin was created')
+
+        factory = APIRequestFactory()
+
+        # test with no authentication
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
+        )
+
+        view = GameManagementViewSet.as_view({'patch': 'mute_all_users'})
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 401)
+
+        # test with non-existing game
+        request = factory.patch(
+            f'/api/admin/games/000000001/chat/mutes/',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk='000000001')
+        self.assertEqual(response.status_code, 404)
+
+        # mute all users without the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
+            data={'mute_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 200)
+
+        game_chat.refresh_from_db()
+        self.assertTrue(game_chat.mute_mode)
+        self.assertEqual(game_chat.mute_until, None)
+
+        # unmute all users
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
+            data={'mute_mode': False},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 200)
+
+        game_chat.refresh_from_db()
+        self.assertFalse(game_chat.mute_mode)
+        self.assertEqual(game_chat.mute_until, None)
+
+        # mute all users with the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
+            data={'mute_mode': True, 'mute_until': 100},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        game_chat.refresh_from_db()
+        self.assertTrue(game_chat.mute_mode)
+        self.assertGreater(game_chat.mute_until, datetime.now(timezone.utc))
+
+        # unmute all users
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
+            data={'mute_mode': False},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 200)
+
+        game_chat.refresh_from_db()
+        self.assertFalse(game_chat.mute_mode)
+        self.assertEqual(game_chat.mute_until, None)
+
+        # mute all users with the time that is not a number
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
+            data={'mute_mode': True, 'mute_until': 'test'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_update_slowmode(self):
+        game = Game.objects.all().first()
+        if not game:
+            self.fail('No game was created')
+
+        game_chat = GameChat.objects.filter(game=game).first()
+        if not game_chat:
+            self.fail('No game chat was created')
+
+        admin = User.objects.get(username='testadmin')
+        if not admin:
+            self.fail('No admin was created')
+
+        factory = APIRequestFactory()
+
+        # test with no authentication
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+        )
+
+        view = GameManagementViewSet.as_view({'patch': 'update_slowmode'})
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 401)
+
+        # test with non-existing game
+        request = factory.patch(
+            f'/api/admin/games/000000001/chat/slowmode/',
+            data={'slow_mode': True, 'slow_mode_time': 100},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk='000000001')
+        self.assertEqual(response.status_code, 404)
+
+        # update slowmode without the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+            data={'slow_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 400)
+
+        # update slowmode with the time that is not a number
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+            data={'slow_mode': True, 'slow_mode_time': 'test'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 400)
+
+        # update slowmode with the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+            data={'slow_mode': True, 'slow_mode_time': 100},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        game_chat.refresh_from_db()
+        self.assertTrue(game_chat.slow_mode)
+        self.assertEqual(game_chat.slow_mode_time, 100)
+
+        # update slowmode without the time
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+            data={'slow_mode': False},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+
+        self.assertEqual(response.status_code, 200)
+        game_chat.refresh_from_db()
+
+        self.assertFalse(game_chat.slow_mode)
+        self.assertEqual(game_chat.slow_mode_time, 0)
+
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+            data={'slow_mode': False, 'slow_mode_time': 'asdfasdf'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 200)
+
+        game_chat.refresh_from_db()
+        self.assertFalse(game_chat.slow_mode)
+        self.assertEqual(game_chat.slow_mode_time, 0)
+
+        # update slowmode without the time and the mode
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/slowmode/',
+            data={},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+
+        response = view(request, pk=game.game_id)
+        self.assertEqual(response.status_code, 400)
