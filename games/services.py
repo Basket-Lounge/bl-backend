@@ -552,6 +552,57 @@ class GameChatService:
             game_chat = GameChat.objects.get(game__game_id=pk)
         except GameChat.DoesNotExist:
             raise NotFoundError()
+        
+    @staticmethod
+    def create_game_chat_message(request, pk):
+        channel = f'games/{pk}/live-chat'
+
+        subscription_token = request.data.get('subscription_token', None)
+        if subscription_token is None:
+            return False, {'error': 'Subscription token is required'}, HTTP_400_BAD_REQUEST
+
+        if not validate_websocket_subscription_token(
+            subscription_token, 
+            channel, 
+            request.user.id
+        ):
+            return False, {'error': 'Invalid subscription token'}, HTTP_400_BAD_REQUEST
+
+        message = request.data.get('message', None)
+        if message is None:
+            return False, {'error': 'Message is required'}, HTTP_400_BAD_REQUEST
+
+        try:
+            game = Game.objects.get(game_id=pk)
+        except Game.DoesNotExist:
+            return False, {'error': 'Game not found'}, HTTP_404_NOT_FOUND
+        
+        user_favorite_team = TeamLike.objects.filter(
+            user=request.user,
+            favorite=True,
+        ).select_related('team').first()
+        
+        resp_json = send_message_to_centrifuge(channel, {
+            'message': message,
+            'user': {
+                'id': request.user.id,
+                'username': request.user.get_username(),
+                'favorite_team': user_favorite_team.team.symbol if user_favorite_team else None
+            },
+            'game': game.game_id,
+            'created_at': int(datetime.now().timestamp())
+        })
+        if resp_json.get('error', None):
+            return False, {'error': 'Message Delivery Unsuccessful'}, HTTP_500_INTERNAL_SERVER_ERROR
+        
+        game_chat, created = GameChat.objects.get_or_create(game=game)
+        GameChatMessage.objects.create(
+            chat=game_chat,
+            message=message,
+            user=request.user
+        )
+
+        return True, None, None
 
 class GameSerializerService:
     @staticmethod

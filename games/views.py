@@ -12,13 +12,15 @@ from rest_framework.permissions import IsAuthenticated
 from api.paginators import CustomPageNumberPagination
 from games.serializers import GameSerializer, LineScoreSerializer
 from games.services import (
+    GameChatSerializerService,
+    GameChatService,
     GameSerializerService, 
     GameService, 
     combine_game_and_linescores, 
     combine_games_and_linescores, 
     get_today_games
 )
-from users.authentication import CookieJWTAccessAuthentication
+from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
 
 
 class GameViewSet(viewsets.ViewSet):
@@ -98,6 +100,39 @@ class GameViewSet(viewsets.ViewSet):
     def post_chat_message(self, request, pk=None):
         created, error, status = GameService.create_game_chat_message(request, pk)
         if not created:
+            return Response(status=status, data=error)
+
+        return Response(status=HTTP_201_CREATED)
+
+
+class GameChatViewSet(viewsets.ViewSet):
+    authentication_classes = [CookieJWTAccessAuthentication]
+
+    def retrieve(self, request, pk=None):
+        chat = GameChatService.get_game_chat(pk)
+        serializer = GameChatSerializerService.serialize_game_chat(chat)
+        return Response(serializer.data)
+    
+    @action(
+        detail=True, 
+        methods=['post'], 
+        url_path='messages',
+    )
+    def post_chat_message(self, request, pk=None):
+        created, error, status = GameChatService.create_game_chat_message(request, pk)
+        if not created:
+            return Response(status=status, data=error)
+
+        return Response(status=HTTP_201_CREATED)
+    
+    @action(
+        detail=True, 
+        methods=['patch'],
+        url_path=r'users/(?P<user_id>[0-9a-f-]+)/block',
+    )
+    def block_unblock_user(self, request, pk=None, user_id=None):
+        blocked, error, status = GameChatService.block_user(pk, user_id)
+        if not blocked:
             return Response(status=status, data=error)
 
         return Response(status=HTTP_201_CREATED)
