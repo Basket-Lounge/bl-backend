@@ -1,5 +1,6 @@
+from datetime import datetime, timedelta, timezone
 from rest_framework import viewsets
-from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_404_NOT_FOUND
+from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_404_NOT_FOUND, HTTP_400_BAD_REQUEST
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -17,6 +18,7 @@ from management.serializers import (
 )
 
 from management.services.models_services import (
+    GameManagementService,
     UserManagementService,
     PostManagementService,
     InquiryService,
@@ -24,6 +26,7 @@ from management.services.models_services import (
     ReportService,
 )
 from management.services.serializers_services import (
+    GameManagementSerializerService,
     InquiryModeratorSerializerService,
     PostManagementSerializerService,
     UserManagementSerializerService,
@@ -46,6 +49,7 @@ from teams.services import PostSerializerService, PostService, TeamSerializerSer
 from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
 from users.models import Role, User
 from users.serializers import RoleSerializer
+from users.services.models_services import UserService
 from users.services.serializers_services import PostCommentSerializerService, UserChatSerializerService
 from users.utils import generate_websocket_subscription_token
 
@@ -602,3 +606,156 @@ class UserManagementViewSet(viewsets.ViewSet):
 
         serializer = UserChatSerializerService.serialize_chat_with_entire_log(chat)
         return Response(serializer.data)
+    
+
+class GameManagementViewSet(viewsets.ViewSet):
+    authentication_classes = [CookieJWTAdminAccessAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'chat'
+    )
+    def get_game_chat(self, request, pk=None):
+        chat = GameManagementService.get_game_chat(pk)
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        serializer = GameManagementSerializerService.serialize_game_chat(chat)
+        return Response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'chat/blacklist'
+    )
+    def get_blocked_users(self, request, pk=None):
+        banned_users = GameManagementService.get_banned_users(pk)
+        muted_users = GameManagementService.get_muted_users(pk)
+
+        data = GameManagementSerializerService.serialize_game_chat_blacklist(
+            banned_users, muted_users
+        )
+        return Response(data)
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'chat/bans/(?P<user_id>[0-9a-f-]+)'
+    )
+    def ban_user(self, request, pk=None, user_id=None):
+        game_chat = GameManagementService.get_game_chat_with_id_only(pk)
+        if not game_chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        user = UserService.get_user_with_id_only(user_id)
+        if not user:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        data = request.data
+        reason = data.get('reason', None)
+
+        user_banned = GameManagementService.check_user_is_banned_from_game_chat(pk, user_id)
+        try:
+            if not user_banned:
+                GameManagementService.ban_user_from_game_chat(game_chat, user, reason)
+                return Response(status=HTTP_201_CREATED)
+
+            GameManagementService.unban_user_from_game_chat(game_chat, user)
+            return Response(status=HTTP_200_OK)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'chat/mutes/(?P<user_id>[0-9a-f-]+)'
+    )
+    def mute_user(self, request, pk=None, user_id=None):
+        game_chat = GameManagementService.get_game_chat_with_id_only(pk)
+        if not game_chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        user = UserService.get_user_with_id_only(user_id)
+        if not user:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        data = request.data
+        reason = data.get('reason', None)
+        mute_until = data.get('mute_until', None)
+        if not type(mute_until) == int and mute_until is not None:
+            return Response(
+                status=HTTP_400_BAD_REQUEST,
+                data={'error': 'Invalid mute time!'}
+            )
+
+        mute_until_datetime = datetime.now(timezone.utc) + timedelta(seconds=mute_until) if mute_until else None
+        user_muted = GameManagementService.check_user_is_muted_from_game_chat(pk, user_id)
+        try:
+            if not user_muted:
+                GameManagementService.mute_user_from_game_chat(
+                    game_chat, 
+                    user,
+                    reason,
+                    mute_until_datetime
+                )
+
+                return Response(status=HTTP_201_CREATED)
+
+            GameManagementService.unmute_user_from_game_chat(game_chat, user)
+            return Response(status=HTTP_200_OK)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+        
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'chat/mutes'
+    )
+    def mute_all_users(self, request, pk=None):
+        game_chat = GameManagementService.get_game_chat(pk)
+        if not game_chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        data = request.data
+        mute_mode = data.get('mute_mode', None)
+        mute_until = data.get('mute_until', None)
+
+        if type(mute_until) != int and mute_until != None:
+            return Response(
+                status=HTTP_400_BAD_REQUEST,
+                data={'error': 'Invalid mute time!'}
+            )
+
+        mute_until_datetime = datetime.now(timezone.utc) + timedelta(seconds=mute_until) if mute_until else None
+        try:
+            GameManagementService.update_mute_mode_game_chat(
+                game_chat, 
+                mute_mode, 
+                mute_until_datetime
+            )
+            return Response(status=HTTP_200_OK)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+    
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path=r'chat/slowmode'
+    )
+    def update_slowmode(self, request, pk=None):
+        game_chat = GameManagementService.get_game_chat(pk)
+        if not game_chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+
+        try: 
+            data = request.data
+            slow_mode = data.get('slow_mode', None)
+            slow_mode_time = data.get('slow_mode_time', None)
+
+            GameManagementService.update_slow_mode(game_chat, slow_mode, slow_mode_time)
+
+            return Response(status=HTTP_200_OK)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
