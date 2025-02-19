@@ -1,6 +1,8 @@
 from typing import List
 from api.exceptions import NotFoundError
 from api.websocket import broadcast_message_to_centrifuge, send_message_to_centrifuge
+from games.models import GameChat, GameChatBan, GameChatMute
+from games.serializers import GameChatBanSerializer, GameChatMuteSerializer, GameChatSerializer
 from management.models import (
     Inquiry, 
     InquiryModerator, 
@@ -816,3 +818,64 @@ class UserManagementSerializerService:
                 }
             }
         )
+
+class GameManagementSerializerService:
+    @staticmethod
+    def serialize_game_chat(game_chat: GameChat) -> GameChatSerializer:
+        return GameChatSerializer(
+            game_chat,
+            context={
+                'game': {
+                    'fields': ['game_id', 'game_status_id']
+                }
+            }
+        )
+
+    def serialize_game_chat_blacklist(
+        game_chat_ban: BaseManager[GameChatBan],
+        game_chat_mute: BaseManager[GameChatMute]
+    ) -> dict:
+        game_chat_ban_serializer = GameChatBanSerializer(
+            game_chat_ban,
+            many=True,
+            fields_exclude=['id'],
+            context={
+                'chat': {
+                    'fields': ['game_data']
+                },
+                'game': {
+                    'fields': ['game_id']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'message': {
+                    'fields': ['message', 'created_at', 'updated_at']
+                }
+            }
+        )
+
+        game_chat_mute_serializer = GameChatMuteSerializer(
+            game_chat_mute,
+            many=True,
+            fields_exclude=['id'],
+            context={
+                'chat': {
+                    'fields': ['game_data']
+                },
+                'game': {
+                    'fields': ['game_id']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'message': {
+                    'fields': ['message', 'created_at', 'updated_at']
+                }
+            }
+        )
+
+        return {
+            'bans': game_chat_ban_serializer.data,
+            'mutes': game_chat_mute_serializer.data
+        }
