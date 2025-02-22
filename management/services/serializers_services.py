@@ -830,7 +830,21 @@ class GameManagementSerializerService:
                 }
             }
         )
+    
+    @staticmethod
+    def serialize_game_chat_for_blacklist(
+        game_chat: GameChat
+    ) -> GameChatSerializer:
+        return GameChatSerializer(
+            game_chat,
+            context={
+                'game': {
+                    'fields': ['game_id']
+                },
+            }
+        )
 
+    @staticmethod
     def serialize_game_chat_blacklist(
         game_chat_ban: BaseManager[GameChatBan],
         game_chat_mute: BaseManager[GameChatMute]
@@ -879,3 +893,47 @@ class GameManagementSerializerService:
             'bans': game_chat_ban_serializer.data,
             'mutes': game_chat_mute_serializer.data
         }
+    
+    @staticmethod
+    def serialize_game_chat_ban(
+        game_chat_ban: GameChatBan
+    ) -> GameChatBanSerializer:
+        return GameChatBanSerializer(
+            game_chat_ban,
+            context={
+                'chat': {
+                    'fields': ['game_data']
+                },
+                'game': {
+                    'fields': ['game_id']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'message': {
+                    'fields': ['id', 'message', 'created_at', 'updated_at']
+                }
+            }
+        )
+
+    @staticmethod 
+    def serialize_game_chat_mute(
+        game_chat_mute: GameChatMute
+    ) -> GameChatMuteSerializer:
+        return GameChatMuteSerializer(
+            game_chat_mute,
+            context={
+                'chat': {
+                    'fields': ['game_data']
+                },
+                'game': {
+                    'fields': ['game_id']
+                },
+                'user': {
+                    'fields': ['id', 'username']
+                },
+                'message': {
+                    'fields': ['id', 'message', 'created_at', 'updated_at']
+                }
+            }
+        )

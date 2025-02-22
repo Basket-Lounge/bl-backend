@@ -9,6 +9,7 @@ from rest_framework.status import (
 )
 from rest_framework.permissions import IsAuthenticated
 
+from api.exceptions import CustomError
 from api.paginators import CustomPageNumberPagination
 from games.serializers import GameSerializer, LineScoreSerializer
 from games.services import (
@@ -20,7 +21,7 @@ from games.services import (
     combine_games_and_linescores, 
     get_today_games
 )
-from users.authentication import CookieJWTAccessAuthentication, CookieJWTAdminAccessAuthentication
+from users.authentication import CookieJWTAccessAuthentication
 
 
 class GameViewSet(viewsets.ViewSet):
@@ -98,9 +99,10 @@ class GameViewSet(viewsets.ViewSet):
         url_path='chat', 
     )
     def post_chat_message(self, request, pk=None):
-        created, error, status = GameService.create_game_chat_message(request, pk)
-        if not created:
-            return Response(status=status, data=error)
+        try:
+            GameChatService.create_game_chat_message(request, pk)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         return Response(status=HTTP_201_CREATED)
 
@@ -119,20 +121,9 @@ class GameChatViewSet(viewsets.ViewSet):
         url_path='messages',
     )
     def post_chat_message(self, request, pk=None):
-        created, error, status = GameChatService.create_game_chat_message(request, pk)
-        if not created:
-            return Response(status=status, data=error)
-
-        return Response(status=HTTP_201_CREATED)
-    
-    @action(
-        detail=True, 
-        methods=['patch'],
-        url_path=r'users/(?P<user_id>[0-9a-f-]+)/block',
-    )
-    def block_unblock_user(self, request, pk=None, user_id=None):
-        blocked, error, status = GameChatService.block_user(pk, user_id)
-        if not blocked:
-            return Response(status=status, data=error)
+        try:
+            GameChatService.create_game_chat_message(request, pk)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         return Response(status=HTTP_201_CREATED)

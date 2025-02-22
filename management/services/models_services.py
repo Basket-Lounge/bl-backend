@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
-from typing import List, Union
+from typing import List, Tuple, Union
 import uuid
 
 from django.db import IntegrityError
-from api.exceptions import BadRequestError
-from games.models import Game, GameChat, GameChatBan, GameChatMute
+from api.exceptions import BadRequestError, InternalServerError
+from api.websocket import send_message_to_centrifuge
+from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute
 from management.models import (
     Inquiry, 
     InquiryMessage, 
@@ -994,6 +995,22 @@ class GameManagementService:
             user__id=user_id,
             disabled=False,
         ).exists()
+    
+    @staticmethod
+    def disable_expired_game_chat_mutes() -> None:
+        GameChatMute.objects.filter(
+            mute_until__lt=datetime.now(timezone.utc)
+        ).update(disabled=True)
+
+    @staticmethod
+    def get_game_chat_ban(id: str) -> GameChatBan | None:
+        return GameChatBan.objects.filter(
+            id=id
+        ).select_related(
+            'chat__game',
+            'user',
+            'message'
+        ).first()
 
     @staticmethod
     def ban_user_from_game_chat(
@@ -1024,6 +1041,103 @@ class GameManagementService:
         ).update(disabled=True)
 
     @staticmethod
+    def update_ban_mode_user_game_chat(
+        game_chat: GameChat,
+        user: User,
+        ban_mode: bool,
+        reason: str | None = None,
+        message_id: str | None = None
+    ) -> GameChatBan | None:
+        """
+        Update ban mode of a user in a game chat.
+
+        Args:
+            - game_chat [GameChat]: A game chat.
+            - user [User]: A user to ban.
+            - message_id [str | None]: Message id.
+            - [Optional] reason [str | None]: Reason for banning the user.
+            - [Optional] ban_mode [bool]: Ban mode.
+
+        Returns:
+            - GameChatBan | None: GameChatBan object or None.
+        """
+        if type(ban_mode) != bool:
+            raise BadRequestError('Invalid ban mode value.')
+        
+        if reason and type(reason) != str:
+            raise BadRequestError('Invalid reason value.')
+
+        message = None 
+        if message_id:
+            try:
+                message_id_uuid = uuid.UUID(message_id)
+                message = GameChatMessage.objects.filter(
+                    id=message_id_uuid
+                ).first()
+            except ValueError:
+                raise BadRequestError('Invalid message id. Must be a valid UUID.')
+        
+        ban = GameChatBan.objects.filter(
+            chat=game_chat,
+            user=user,
+            disabled=False
+        ).first()
+
+        if ban:
+            if ban_mode:
+                if reason:
+                    ban.reason = reason
+
+                if message:
+                    ban.message = message
+
+                ban.save()
+                return ban
+            else:
+                ban.disabled = True
+                ban.save()
+
+                return None
+        else:
+            if ban_mode:
+                ban = GameChatBan.objects.create(
+                    chat=game_chat,
+                    user=user
+                )
+
+                if reason:
+                    ban.reason = reason
+                    ban.save()
+
+                if message:
+                    ban.message = message
+                    ban.save()
+
+                return ban
+            else:
+                return None
+            
+    def signal_deletion_user_messages(pk: str, user_id: int) -> None:
+        """
+        Signal deletion of user messages.
+
+        Args:
+            - pk: Game id.
+            - user_id: User id.
+
+        Returns:
+            - None
+        """
+
+        channel = f'games/{pk}/live-chat'
+        resp_json = send_message_to_centrifuge(channel, {
+            'user_id': int(user_id)
+        }, 'delete_user_messages')
+
+        if resp_json.get('error', None):
+            raise InternalServerError()
+
+    @staticmethod
     def mute_game_chat(
         game_chat: GameChat,
         mute_until: datetime | None
@@ -1037,6 +1151,16 @@ class GameManagementService:
             game_chat.mute_until = mute_until
 
         game_chat.save()
+
+    @staticmethod
+    def get_game_chat_mute(id: str) -> GameChatMute | None:
+        return GameChatMute.objects.filter(
+            id=id
+        ).select_related(
+            'chat__game',
+            'user',
+            'message'
+        ).first()
 
     @staticmethod
     def unmute_game_chat(
@@ -1055,15 +1179,104 @@ class GameManagementService:
         if type(mute_mode) != bool:
             raise BadRequestError('Invalid mute mode value.')
     
-        if not type(mute_until) == datetime and mute_until != None:
+        if type(mute_until) != datetime and mute_until != None:
+            raise BadRequestError('Invalid mute until value.')
+        
+        if mute_until and mute_until > datetime.now(timezone.utc):
+            game_chat.mute_until = mute_until
+        else:
+            game_chat.mute_until = None
+        
+        game_chat.mute_mode = mute_mode
+        game_chat.save()
+
+    @staticmethod
+    def update_mute_mode_user_game_chat(
+        game_chat: GameChat,
+        user: User,
+        message_id: str | None,
+        reason: str | None,
+        mute_mode: bool,
+        mute_until: datetime | None
+    ) -> GameChatMute | None:
+        """
+        Update mute mode of a user in a game chat.
+
+        Args:
+            - game_chat (GameChat): A game chat.
+            - user (User): A user to mute.
+            - message_id (str | None): Message id.
+            - reason (str | None): Reason for muting the user.
+            - mute_mode (bool): Mute mode.
+            - mute_until (datetime | None): For how long the user is muted.
+
+        Returns:
+            - GameChatMute | None: GameChatMute object or None.
+        """
+        if type(mute_mode) != bool:
+            raise BadRequestError('Invalid mute mode value.')
+        
+        if reason and type(reason) != str:
+            raise BadRequestError('Invalid reason value.')
+
+        message = None 
+        if message_id:
+            try:
+                message_id_uuid = uuid.UUID(message_id)
+                message = GameChatMessage.objects.filter(
+                    id=message_id_uuid
+                ).first()
+            except ValueError:
+                raise BadRequestError('Invalid message id. Must be a valid UUID.')
+    
+        if type(mute_until) != datetime and mute_until != None:
             raise BadRequestError('Invalid mute until value.')
         
         if mute_until and mute_until < datetime.now(timezone.utc):
-            raise BadRequestError('Invalid mute until value.')
-        
-        game_chat.mute_mode = mute_mode
-        game_chat.mute_until = mute_until
-        game_chat.save()
+            mute_until = None
+
+        mute = GameChatMute.objects.filter(
+            chat=game_chat,
+            user=user,
+            disabled=False
+        ).first()
+
+        if mute:
+            if mute_mode:
+                if reason:
+                    mute.reason = reason
+
+                if message:
+                    mute.message = message
+
+                mute.mute_until = mute_until
+                mute.save()
+
+                return mute
+            else:
+                mute.disabled = True
+                mute.save()
+
+                return None
+        else:
+            if mute_mode:
+                mute = GameChatMute.objects.create(
+                    chat=game_chat,
+                    user=user,
+                    mute_until=mute_until
+                )
+
+                if message:
+                    mute.message = message
+                    mute.save()
+
+                if reason:
+                    mute.reason = reason
+                    mute.save()
+
+                return mute
+            else:
+                return None
 
     @staticmethod
     def mute_user_from_game_chat(
@@ -1134,6 +1347,16 @@ class GameManagementService:
         game_chat.save()
 
     @staticmethod
+    def disable_mute_mode_game_chat(
+        game_chat: GameChat
+    ) -> None:
+        if game_chat.mute_mode:
+            if game_chat.mute_until and game_chat.mute_until < datetime.now(timezone.utc):
+                game_chat.mute_mode = False
+                game_chat.mute_until = None
+                game_chat.save()
+
+    @staticmethod
     def get_game_chat_with_id_only(pk: str) -> GameChat | None:
         return GameChat.objects.filter(
             game__game_id=pk
@@ -1153,6 +1376,7 @@ class GameManagementService:
             'id',
             'slow_mode',
             'slow_mode_time',
+            'mute_mode',
             'mute_until'
         ).first()
     
