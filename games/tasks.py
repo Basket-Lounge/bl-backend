@@ -13,6 +13,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 @shared_task
+def update_game_datetime():
+    games = ScoreBoard().games.get_dict()
+
+    for game in games:
+        try:
+            existing_game = Game.objects.get(game_id=game['gameId'])
+        except Game.DoesNotExist:
+            logger.info("Game not found: ", game['gameId'])
+            continue
+        
+        existing_game.game_date_est = game['gameEt']
+        existing_game.save()
+
+@shared_task
 def update_game_score():
     games = ScoreBoard().games.get_dict()
     
