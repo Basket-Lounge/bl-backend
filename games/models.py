@@ -174,7 +174,12 @@ class GameChatMute(models.Model):
         'users.User', 
         on_delete=models.CASCADE
     )
-    message = models.ForeignKey(GameChatMessage, on_delete=models.CASCADE, null=True, blank=True)
+    message = models.ForeignKey(
+        GameChatMessage, 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True
+    )
     reason = models.TextField(default='No reason provided')
     disabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

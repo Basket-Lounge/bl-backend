@@ -1,15 +1,15 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 import pytz
 
-from api.exceptions import NotFoundError
+from api.exceptions import BadRequestError, InternalServerError, NotFoundError
 from api.websocket import send_message_to_centrifuge
 from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute, LineScore, TeamStatistics
 
 from django.db.models import Prefetch, Q
 from django.db.models.manager import BaseManager
 
-from games.serializers import GameChatBanSerializer, GameChatSerializer, GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
+from games.serializers import  GameChatSerializer, GameSerializer, LineScoreSerializer, PlayerStatisticsSerializer
 from players.models import Player, PlayerStatistics
 from teams.models import TeamLike, TeamName, Team
 
@@ -22,6 +22,16 @@ from typing import Tuple
 from users.models import User
 from users.utils import validate_websocket_subscription_token
 
+def update_game_date():
+    """
+    Update the game date of games.
+    """
+
+    games = Game.objects.all()
+
+    for game in games:
+        game.game_date_est = game.game_date_est.replace(tzinfo=pytz.utc)
+        game.save()
 
 def get_today_games() -> Tuple[BaseManager[Game], BaseManager[LineScore]]:
     """
@@ -559,30 +569,76 @@ class GameChatService:
 
         subscription_token = request.data.get('subscription_token', None)
         if subscription_token is None:
-            return False, {'error': 'Subscription token is required'}, HTTP_400_BAD_REQUEST
+            raise BadRequestError('Subscription token is required')
 
         if not validate_websocket_subscription_token(
             subscription_token, 
             channel, 
             request.user.id
         ):
-            return False, {'error': 'Invalid subscription token'}, HTTP_400_BAD_REQUEST
+            raise BadRequestError('Invalid subscription token')
 
         message = request.data.get('message', None)
         if message is None:
-            return False, {'error': 'Message is required'}, HTTP_400_BAD_REQUEST
+            raise BadRequestError('Message is required')
 
         try:
             game = Game.objects.get(game_id=pk)
         except Game.DoesNotExist:
-            return False, {'error': 'Game not found'}, HTTP_404_NOT_FOUND
+            raise NotFoundError()
+        
+        game_chat, _ = GameChat.objects.get_or_create(game=game)
+        if game_chat.mute_mode:
+            if game_chat.mute_until == None:
+                raise BadRequestError('Forever')
+            
+            current_datetime = datetime.now(timezone.utc)
+            if game_chat.mute_until > current_datetime:
+                raise BadRequestError(game_chat.mute_until.strftime('%Y-%m-%dT%H:%M:%S.%fZ'))
+            else:
+                game_chat.mute_mode = False
+                game_chat.mute_until = None
+                game_chat.save()
+
+        ban = GameChatBan.objects.filter(
+            user=request.user,
+            chat=game_chat,
+            disabled=False
+        ).first()
+
+        if ban:
+            raise BadRequestError('Banned')
+        
+        mute = GameChatMute.objects.filter(
+            user=request.user,
+            chat=game_chat,
+            disabled=False
+        ).first()
+
+        if mute:
+            current_datetime = datetime.now(timezone.utc)
+            if mute.mute_until == None:
+                raise BadRequestError('Muted')
+
+            if mute.mute_until > current_datetime:
+                raise BadRequestError(mute.mute_until.strftime('%Y-%m-%dT%H:%M:%S.%fZ'))
+
+            mute.disabled = True
+            mute.save()
         
         user_favorite_team = TeamLike.objects.filter(
             user=request.user,
             favorite=True,
         ).select_related('team').first()
+
+        message_obj = GameChatMessage.objects.create(
+            chat=game_chat,
+            message=message,
+            user=request.user
+        )
         
         resp_json = send_message_to_centrifuge(channel, {
+            'id': str(message_obj.id),
             'message': message,
             'user': {
                 'id': request.user.id,
@@ -590,19 +646,11 @@ class GameChatService:
                 'favorite_team': user_favorite_team.team.symbol if user_favorite_team else None
             },
             'game': game.game_id,
-            'created_at': int(datetime.now().timestamp())
+            'created_at': message_obj.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') 
         })
-        if resp_json.get('error', None):
-            return False, {'error': 'Message Delivery Unsuccessful'}, HTTP_500_INTERNAL_SERVER_ERROR
-        
-        game_chat, created = GameChat.objects.get_or_create(game=game)
-        GameChatMessage.objects.create(
-            chat=game_chat,
-            message=message,
-            user=request.user
-        )
 
-        return True, None, None
+        if resp_json.get('error', None):
+            raise InternalServerError()
 
 class GameSerializerService:
     @staticmethod
