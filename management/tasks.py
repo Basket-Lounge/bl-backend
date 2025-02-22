@@ -1,6 +1,7 @@
 from celery import shared_task
 
 from management.services.models_services import (
+    GameManagementService,
     InquiryModeratorService,
     InquiryService, 
     filter_and_fetch_inquiry
@@ -85,3 +86,10 @@ def broadcast_inquiry_updates_to_all_parties(inquiry_id: str):
             inquiry,
             moderator.moderator.id,
         )
+
+@shared_task
+def disable_user_chat_mute():
+    """
+    Disable user chat mutes that have expired.
+    """
+    GameManagementService.disable_expired_game_chat_mutes()
