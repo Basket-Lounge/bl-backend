@@ -382,6 +382,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/1"),
         "options": {"queue": "today_game_update"},
     },
+    "update_game_datetime": {
+        "task": "games.tasks.update_game_datetime",
+        "schedule": crontab(minute="*/10"),
+        "options": {"queue": "today_game_update"},
+    },
     "update_teams_roster": {
         "task": "teams.tasks.update_teams_roster",
         "schedule": crontab(minute=0, hour=5),
@@ -397,6 +402,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=0, hour=5),
         "options": {"queue": "low_priority"},
     },
+    "update_game_chat_mutes": {
+        "task": "management.tasks.disable_user_chat_mute",
+        "schedule": crontab(minute="*/1"),
+        "options": {"queue": "high_priority"},
+    }
 }
 
 ## Cache settings
