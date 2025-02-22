@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from rest_framework.test import APITestCase, APIRequestFactory, force_authenticate
 
@@ -1020,10 +1020,18 @@ class GameManagementViewSetTestCase(APITestCase):
         response = view(request, pk=game.game_id)
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('bans' in response.data)
-        self.assertTrue('mutes' in response.data)
-        self.assertEqual(response.data['bans'], [])
-        self.assertEqual(response.data['mutes'], [])
+        self.assertTrue('id' in response.data)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_mode' in response.data)
+        self.assertTrue('mute_until' in response.data)
+        self.assertTrue('blacklist' in response.data)
+        self.assertTrue('bans' in response.data['blacklist'])
+        self.assertTrue('mutes' in response.data['blacklist'])
+        self.assertEqual(response.data['blacklist']['bans'], [])
+        self.assertEqual(response.data['blacklist']['mutes'], [])
 
         # Create a ban and a mute
         ban = GameChatBan.objects.create(
@@ -1039,41 +1047,59 @@ class GameManagementViewSetTestCase(APITestCase):
         response = view(request, pk=game.game_id)
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('bans' in response.data)
-        self.assertTrue('mutes' in response.data)
-        self.assertEqual(len(response.data['bans']), 1)
-        self.assertEqual(len(response.data['mutes']), 1)
+        self.assertTrue('id' in response.data)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_mode' in response.data)
+        self.assertTrue('mute_until' in response.data)
+        self.assertTrue('blacklist' in response.data)
+        self.assertTrue('bans' in response.data['blacklist'])
+        self.assertTrue('mutes' in response.data['blacklist'])
+        self.assertEqual(len(response.data['blacklist']['bans']), 1)
+        self.assertEqual(len(response.data['blacklist']['mutes']), 1)
 
-        self.assertTrue('user_data' in response.data['bans'][0])
-        self.assertTrue('chat_data' in response.data['bans'][0])
-        self.assertTrue('message_data' in response.data['bans'][0])
-        self.assertEqual(response.data['bans'][0]['user_data']['username'], 'testuser')
-        self.assertEqual(response.data['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
-        self.assertEqual(response.data['bans'][0]['message_data'], None)
+        self.assertTrue('user_data' in response.data['blacklist']['bans'][0])
+        self.assertTrue('chat_data' in response.data['blacklist']['bans'][0])
+        self.assertTrue('message_data' in response.data['blacklist']['bans'][0])
+        self.assertEqual(response.data['blacklist']['bans'][0]['user_data']['username'], 'testuser')
+        self.assertEqual(response.data['blacklist']['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['blacklist']['bans'][0]['message_data'], None)
 
-        self.assertTrue('user_data' in response.data['mutes'][0])
-        self.assertTrue('chat_data' in response.data['mutes'][0])
-        self.assertTrue('message_data' in response.data['mutes'][0])
-        self.assertEqual(response.data['mutes'][0]['user_data']['username'], 'testuser2')
-        self.assertEqual(response.data['mutes'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
-        self.assertEqual(response.data['mutes'][0]['message_data'], None)
+        self.assertTrue('user_data' in response.data['blacklist']['mutes'][0])
+        self.assertTrue('chat_data' in response.data['blacklist']['mutes'][0])
+        self.assertTrue('message_data' in response.data['blacklist']['mutes'][0])
+        self.assertEqual(response.data['blacklist']['mutes'][0]['user_data']['username'], 'testuser2')
+        self.assertEqual(response.data['blacklist']['mutes'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['blacklist']['mutes'][0]['message_data'], None)
 
         # disable the mute
         mute.disabled = True
         mute.save()
+
         response = view(request, pk=game.game_id)
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('bans' in response.data)
-        self.assertTrue('mutes' in response.data)
-        self.assertEqual(len(response.data['bans']), 1)
-        self.assertEqual(len(response.data['mutes']), 0)
-        self.assertTrue('user_data' in response.data['bans'][0])
-        self.assertTrue('chat_data' in response.data['bans'][0])
-        self.assertTrue('message_data' in response.data['bans'][0])
-        self.assertEqual(response.data['bans'][0]['user_data']['username'], 'testuser')
-        self.assertEqual(response.data['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
-        self.assertEqual(response.data['bans'][0]['message_data'], None)
+        self.assertTrue('id' in response.data)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_mode' in response.data)
+        self.assertTrue('mute_until' in response.data)
+        self.assertTrue('blacklist' in response.data)
+        self.assertTrue('bans' in response.data['blacklist'])
+        self.assertTrue('mutes' in response.data['blacklist'])
+        self.assertEqual(len(response.data['blacklist']['bans']), 1)
+        self.assertEqual(len(response.data['blacklist']['mutes']), 0)
+
+        self.assertTrue('user_data' in response.data['blacklist']['bans'][0])
+        self.assertTrue('chat_data' in response.data['blacklist']['bans'][0])
+        self.assertTrue('message_data' in response.data['blacklist']['bans'][0])
+        self.assertEqual(response.data['blacklist']['bans'][0]['user_data']['username'], 'testuser')
+        self.assertEqual(response.data['blacklist']['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(response.data['blacklist']['bans'][0]['message_data'], None)
 
         # disable the ban
         ban.disabled = True
@@ -1081,10 +1107,18 @@ class GameManagementViewSetTestCase(APITestCase):
         response = view(request, pk=game.game_id)
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('bans' in response.data)
-        self.assertTrue('mutes' in response.data)
-        self.assertEqual(len(response.data['bans']), 0)
-        self.assertEqual(len(response.data['mutes']), 0)
+        self.assertTrue('id' in response.data)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_mode' in response.data)
+        self.assertTrue('mute_until' in response.data)
+        self.assertTrue('blacklist' in response.data)
+        self.assertTrue('bans' in response.data['blacklist'])
+        self.assertTrue('mutes' in response.data['blacklist'])
+        self.assertEqual(len(response.data['blacklist']['bans']), 0)
+        self.assertEqual(len(response.data['blacklist']['mutes']), 0)
 
         # Create a message
         GameChatMessage.objects.create(
@@ -1101,19 +1135,27 @@ class GameManagementViewSetTestCase(APITestCase):
 
         response = view(request, pk=game.game_id)
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('bans' in response.data)
-        self.assertTrue('mutes' in response.data)
-        self.assertEqual(len(response.data['bans']), 1)
-        self.assertEqual(len(response.data['mutes']), 0)
-        self.assertTrue('user_data' in response.data['bans'][0])
-        self.assertTrue('chat_data' in response.data['bans'][0])
-        self.assertTrue('message_data' in response.data['bans'][0])
-        self.assertEqual(response.data['bans'][0]['user_data']['username'], 'testuser')
-        self.assertEqual(response.data['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
-        self.assertTrue('message' in response.data['bans'][0]['message_data'])
-        self.assertTrue('created_at' in response.data['bans'][0]['message_data'])
-        self.assertTrue('updated_at' in response.data['bans'][0]['message_data'])
-        self.assertEqual(response.data['bans'][0]['message_data']['message'], 'test message')
+        self.assertTrue('id' in response.data)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_mode' in response.data)
+        self.assertTrue('mute_until' in response.data)
+        self.assertTrue('blacklist' in response.data)
+        self.assertTrue('bans' in response.data['blacklist'])
+        self.assertTrue('mutes' in response.data['blacklist'])
+        self.assertEqual(len(response.data['blacklist']['bans']), 1)
+        self.assertEqual(len(response.data['blacklist']['mutes']), 0)
+        self.assertTrue('user_data' in response.data['blacklist']['bans'][0])
+        self.assertTrue('chat_data' in response.data['blacklist']['bans'][0])
+        self.assertTrue('message_data' in response.data['blacklist']['bans'][0])
+        self.assertEqual(response.data['blacklist']['bans'][0]['user_data']['username'], 'testuser')
+        self.assertEqual(response.data['blacklist']['bans'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertTrue('message' in response.data['blacklist']['bans'][0]['message_data'])
+        self.assertTrue('created_at' in response.data['blacklist']['bans'][0]['message_data'])
+        self.assertTrue('updated_at' in response.data['blacklist']['bans'][0]['message_data'])
+        self.assertEqual(response.data['blacklist']['bans'][0]['message_data']['message'], 'test message')
 
         GameChatMute.objects.create(
             chat=game_chat,
@@ -1123,19 +1165,27 @@ class GameManagementViewSetTestCase(APITestCase):
 
         response = view(request, pk=game.game_id)
         self.assertEqual(response.status_code, 200)
-        self.assertTrue('bans' in response.data)
-        self.assertTrue('mutes' in response.data)
-        self.assertEqual(len(response.data['bans']), 1)
-        self.assertEqual(len(response.data['mutes']), 1)
-        self.assertTrue('user_data' in response.data['mutes'][0])
-        self.assertTrue('chat_data' in response.data['mutes'][0])
-        self.assertTrue('message_data' in response.data['mutes'][0])
-        self.assertEqual(response.data['mutes'][0]['user_data']['username'], 'testuser2')
-        self.assertEqual(response.data['mutes'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
-        self.assertTrue('message' in response.data['mutes'][0]['message_data'])
-        self.assertTrue('created_at' in response.data['mutes'][0]['message_data'])
-        self.assertTrue('updated_at' in response.data['mutes'][0]['message_data'])
-        self.assertEqual(response.data['mutes'][0]['message_data']['message'], 'test message')
+        self.assertTrue('id' in response.data)
+        self.assertTrue('game_data' in response.data)
+        self.assertTrue('game_id' in response.data['game_data'])
+        self.assertTrue('slow_mode' in response.data)
+        self.assertTrue('slow_mode_time' in response.data)
+        self.assertTrue('mute_mode' in response.data)
+        self.assertTrue('mute_until' in response.data)
+        self.assertTrue('blacklist' in response.data)
+        self.assertTrue('bans' in response.data['blacklist'])
+        self.assertTrue('mutes' in response.data['blacklist'])
+        self.assertEqual(len(response.data['blacklist']['bans']), 1)
+        self.assertEqual(len(response.data['blacklist']['mutes']), 1)
+        self.assertTrue('user_data' in response.data['blacklist']['mutes'][0])
+        self.assertTrue('chat_data' in response.data['blacklist']['mutes'][0])
+        self.assertTrue('message_data' in response.data['blacklist']['mutes'][0])
+        self.assertEqual(response.data['blacklist']['mutes'][0]['user_data']['username'], 'testuser2')
+        self.assertEqual(response.data['blacklist']['mutes'][0]['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertTrue('message' in response.data['blacklist']['mutes'][0]['message_data'])
+        self.assertTrue('created_at' in response.data['blacklist']['mutes'][0]['message_data'])
+        self.assertTrue('updated_at' in response.data['blacklist']['mutes'][0]['message_data'])
+        self.assertEqual(response.data['blacklist']['mutes'][0]['message_data']['message'], 'test message')
 
     def test_ban_user(self):
         game = Game.objects.all().first()
@@ -1180,7 +1230,7 @@ class GameManagementViewSetTestCase(APITestCase):
         # ban the user
         request = factory.patch(
             f'/api/admin/games/{str(game.game_id)}/chat/bans/{str(user.id)}/',
-            data={'reason': 'test reason'},
+            data={'reason': 'test reason', 'ban_mode': True},
             format='json',
         )
         force_authenticate(request, user=admin)
@@ -1190,17 +1240,6 @@ class GameManagementViewSetTestCase(APITestCase):
         ban = GameChatBan.objects.filter(chat=game_chat, user=user, disabled=False).first()
         self.assertIsNotNone(ban)
         self.assertEqual(ban.reason, 'test reason')
-
-        # unban the user
-        request = factory.patch(
-            f'/api/admin/games/{str(game.game_id)}/chat/bans/{str(user.id)}/',
-        )
-        force_authenticate(request, user=admin)
-        response = view(request, pk=game.game_id, user_id=user.id)
-        self.assertEqual(response.status_code, 200)
-
-        ban = GameChatBan.objects.filter(chat=game_chat, user=user, disabled=False).first()
-        self.assertIsNone(ban)
 
     def test_mute_user(self):
         game = Game.objects.all().first()
@@ -1214,6 +1253,12 @@ class GameManagementViewSetTestCase(APITestCase):
         user = User.objects.get(username='testuser')
         if not user:
             self.fail('No user was created')
+
+        game_chat_message = GameChatMessage.objects.create(
+            chat=game_chat,
+            user=user,
+            message='test message',
+        )
 
         admin = User.objects.get(username='testadmin')
         if not admin:
@@ -1235,63 +1280,201 @@ class GameManagementViewSetTestCase(APITestCase):
         # test with non-existing game
         request = factory.patch(
             f'/api/admin/games/000000001/chat/mutes/{str(user.id)}/',
-            data={'reason': 'test reason'},
-            format='json',
         )
         force_authenticate(request, user=admin)
         response = view(request, pk='000000001', user_id=user.id)
         self.assertEqual(response.status_code, 404)
 
-        # mute the user without the time
+        # test without data
         request = factory.patch(
             f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
-            data={'reason': 'test reason'},
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test with mute_mode as a string
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'mute_mode': 'test'},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test with mute_mode as a number
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'mute_mode': 100},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test with mute_mode as a boolean
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'mute_mode': True},
             format='json',
         )
         force_authenticate(request, user=admin)
         response = view(request, pk=game.game_id, user_id=user.id)
         self.assertEqual(response.status_code, 201)
 
-        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
-        self.assertIsNotNone(mute)
-        self.assertEqual(mute.reason, 'test reason')
+        data = response.data
+        self.assertTrue('id' in data)
+        self.assertTrue('user_data' in data)
+        self.assertTrue('chat_data' in data)
+        self.assertTrue('game_data' in data['chat_data'])
+        self.assertTrue('message_data' in data)
+        self.assertTrue('mute_until' in data)
+        self.assertTrue('reason' in data)
+        self.assertTrue('disabled' in data)
+        self.assertTrue('created_at' in data)
+        
+        self.assertEqual(data['user_data']['id'], user.id)
+        self.assertEqual(data['user_data']['username'], user.username)
+        self.assertEqual(data['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(data['message_data'], None)
+        self.assertEqual(data['mute_until'], None)
+        self.assertEqual(data['reason'], 'No reason provided')
+        self.assertEqual(data['disabled'], False)
 
-        # unmute the user
         request = factory.patch(
             f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
-        )
-        force_authenticate(request, user=admin)
-        response = view(request, pk=game.game_id, user_id=user.id)
-        self.assertEqual(response.status_code, 200)
-
-        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
-        self.assertIsNone(mute)
-
-        # mute the user with the time
-        request = factory.patch(
-            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
-            data={'reason': 'test reason', 'mute_until': 100},
+            data={'mute_mode': False},
             format='json',
         )
         force_authenticate(request, user=admin)
         response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 200)
 
-        self.assertEqual(response.status_code, 201)
-        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
-        self.assertIsNotNone(mute)
-        self.assertEqual(mute.reason, 'test reason')
-        self.assertGreater(mute.mute_until, datetime.now(timezone.utc))
+        data = response.data
+        self.assertIsNone(data)
 
-        # unmute the user
+        # test with mute_until as a number
         request = factory.patch(
             f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'mute_until': 100, 'mute_mode': True},
+            format='json',
         )
         force_authenticate(request, user=admin)
         response = view(request, pk=game.game_id, user_id=user.id)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
 
-        mute = GameChatMute.objects.filter(chat=game_chat, user=user, disabled=False).first()
-        self.assertIsNone(mute)
+        # test with mute_until as a string that doesn't follow the format
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'mute_until': 'test', 'mute_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test with mute_until as a string that follows the format
+        datetime_now = datetime.now(timezone.utc) + timedelta(days=1)
+        formatted_date = datetime_now.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'mute_until': formatted_date, 'mute_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 201)
+        data = response.data
+
+        self.assertTrue('id' in data)
+        self.assertTrue('user_data' in data)
+        self.assertTrue('chat_data' in data)
+        self.assertTrue('game_data' in data['chat_data'])
+        self.assertTrue('message_data' in data)
+        self.assertTrue('mute_until' in data)
+        self.assertTrue('reason' in data)
+        self.assertTrue('disabled' in data)
+        self.assertTrue('created_at' in data)
+
+        self.assertEqual(data['user_data']['id'], user.id)
+        self.assertEqual(data['user_data']['username'], user.username)
+        self.assertEqual(data['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(data['message_data'], None)
+        mute_until_datetime = datetime.strptime(data['mute_until'], '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+        self.assertEqual(mute_until_datetime, datetime_now)
+        self.assertEqual(data['reason'], 'No reason provided')
+        self.assertEqual(data['disabled'], False)
+
+        # test with reason as a number
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'reason': 100, 'mute_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 400)
+
+        # test with reason as a string
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'reason': 'test reason', 'mute_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 201)
+
+        data = response.data
+        self.assertTrue('id' in data)
+        self.assertTrue('user_data' in data)
+        self.assertTrue('chat_data' in data)
+        self.assertTrue('game_data' in data['chat_data'])
+        self.assertTrue('message_data' in data)
+        self.assertTrue('mute_until' in data)
+        self.assertTrue('reason' in data)
+        self.assertTrue('disabled' in data)
+        self.assertTrue('created_at' in data)
+
+        self.assertEqual(data['user_data']['id'], user.id)
+        self.assertEqual(data['user_data']['username'], user.username)
+        self.assertEqual(data['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(data['message_data'], None)
+        self.assertEqual(data['mute_until'], None)
+        self.assertEqual(data['reason'], 'test reason')
+        self.assertEqual(data['disabled'], False)
+
+        # test with the id of a message
+        request = factory.patch(
+            f'/api/admin/games/{str(game.game_id)}/chat/mutes/{str(user.id)}/',
+            data={'message_id': game_chat_message.id, 'mute_mode': True},
+            format='json',
+        )
+        force_authenticate(request, user=admin)
+        response = view(request, pk=game.game_id, user_id=user.id)
+        self.assertEqual(response.status_code, 201)
+
+        data = response.data
+        self.assertTrue('id' in data)
+        self.assertTrue('user_data' in data)
+        self.assertTrue('chat_data' in data)
+        self.assertTrue('game_data' in data['chat_data'])
+        self.assertTrue('message_data' in data)
+        self.assertTrue('mute_until' in data)
+        self.assertTrue('reason' in data)
+        self.assertTrue('disabled' in data)
+        self.assertTrue('created_at' in data)
+
+        self.assertEqual(data['user_data']['id'], user.id)
+        self.assertEqual(data['user_data']['username'], user.username)
+        self.assertEqual(data['chat_data']['game_data']['game_id'], str(game.game_id))
+        self.assertEqual(data['message_data']['id'], str(game_chat_message.id))
+        self.assertEqual(data['message_data']['message'], game_chat_message.message)
+        self.assertEqual(data['mute_until'], None)
+        self.assertEqual(data['reason'], 'test reason')
+        self.assertEqual(data['disabled'], False)
 
     def test_mute_all_users(self):
         game = Game.objects.all().first()
@@ -1355,9 +1538,12 @@ class GameManagementViewSetTestCase(APITestCase):
         self.assertEqual(game_chat.mute_until, None)
 
         # mute all users with the time
+        datetime_now = datetime.now(timezone.utc) + timedelta(days=1)
+        formatted_date = datetime_now.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'        
+
         request = factory.patch(
             f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
-            data={'mute_mode': True, 'mute_until': 100},
+            data={'mute_mode': True, 'mute_until': formatted_date},
             format='json',
         )
         force_authenticate(request, user=admin)
@@ -1382,7 +1568,7 @@ class GameManagementViewSetTestCase(APITestCase):
         self.assertFalse(game_chat.mute_mode)
         self.assertEqual(game_chat.mute_until, None)
 
-        # mute all users with the time that is not a number
+        # mute all users with the time that is not in a right format
         request = factory.patch(
             f'/api/admin/games/{str(game.game_id)}/chat/mutes/',
             data={'mute_mode': True, 'mute_until': 'test'},
