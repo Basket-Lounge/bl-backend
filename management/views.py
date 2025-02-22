@@ -631,13 +631,24 @@ class GameManagementViewSet(viewsets.ViewSet):
         url_path=r'chat/blacklist'
     )
     def get_blocked_users(self, request, pk=None):
+        chat = GameManagementService.get_game_chat(pk)
+        if not chat:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        GameManagementService.disable_mute_mode_game_chat(chat)
+
         banned_users = GameManagementService.get_banned_users(pk)
         muted_users = GameManagementService.get_muted_users(pk)
 
-        data = GameManagementSerializerService.serialize_game_chat_blacklist(
+        game_chat_serializer = GameManagementSerializerService.serialize_game_chat_for_blacklist(chat) 
+        game_chat_data = game_chat_serializer.data
+
+        blacklist_data = GameManagementSerializerService.serialize_game_chat_blacklist(
             banned_users, muted_users
         )
-        return Response(data)
+
+        game_chat_data['blacklist'] = blacklist_data
+        return Response(game_chat_data)
     
     @action(
         detail=True,
@@ -654,15 +665,25 @@ class GameManagementViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         data = request.data
+        ban_mode = data.get('ban_mode', None)
         reason = data.get('reason', None)
+        message_id = data.get('message_id', None)
 
-        user_banned = GameManagementService.check_user_is_banned_from_game_chat(pk, user_id)
         try:
-            if not user_banned:
-                GameManagementService.ban_user_from_game_chat(game_chat, user, reason)
-                return Response(status=HTTP_201_CREATED)
+            game_chat_ban = GameManagementService.update_ban_mode_user_game_chat(
+                game_chat, 
+                user, 
+                ban_mode, 
+                reason, 
+                message_id
+            )
 
-            GameManagementService.unban_user_from_game_chat(game_chat, user)
+            if game_chat_ban:
+                GameManagementService.signal_deletion_user_messages(pk, user_id)
+                game_chat_ban = GameManagementService.get_game_chat_ban(game_chat_ban.id)
+                serializer = GameManagementSerializerService.serialize_game_chat_ban(game_chat_ban)
+                return Response(status=HTTP_201_CREATED, data=serializer.data)
+
             return Response(status=HTTP_200_OK)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
@@ -682,31 +703,43 @@ class GameManagementViewSet(viewsets.ViewSet):
             return Response(status=HTTP_404_NOT_FOUND)
         
         data = request.data
+        message_id = data.get('message_id', None)
         reason = data.get('reason', None)
+        mute_mode = data.get('mute_mode', None)
         mute_until = data.get('mute_until', None)
-        if not type(mute_until) == int and mute_until is not None:
+
+        if not type(mute_until) == str and mute_until is not None:
             return Response(
                 status=HTTP_400_BAD_REQUEST,
                 data={'error': 'Invalid mute time!'}
             )
 
-        mute_until_datetime = datetime.now(timezone.utc) + timedelta(seconds=mute_until) if mute_until else None
-        user_muted = GameManagementService.check_user_is_muted_from_game_chat(pk, user_id)
         try:
-            if not user_muted:
-                GameManagementService.mute_user_from_game_chat(
-                    game_chat, 
-                    user,
-                    reason,
-                    mute_until_datetime
-                )
+            mute_until_datetime = datetime.strptime(mute_until, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc) if mute_until else None
+        except ValueError:
+            return Response(
+                status=HTTP_400_BAD_REQUEST,
+                data={'error': 'Invalid mute time! The format should be: YYYY-MM-DDTHH:MM:SS.sssZ'}
+            )
 
-                return Response(status=HTTP_201_CREATED)
-
-            GameManagementService.unmute_user_from_game_chat(game_chat, user)
-            return Response(status=HTTP_200_OK)
+        try:
+            mute = GameManagementService.update_mute_mode_user_game_chat(
+                game_chat,
+                user,
+                message_id,
+                reason,
+                mute_mode,
+                mute_until_datetime
+            )
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
+
+        if mute:
+            mute = GameManagementService.get_game_chat_mute(mute.id)
+            serializer = GameManagementSerializerService.serialize_game_chat_mute(mute)
+            return Response(status=HTTP_201_CREATED, data=serializer.data)
+        
+        return Response(status=HTTP_200_OK)
         
     @action(
         detail=True,
@@ -722,13 +755,20 @@ class GameManagementViewSet(viewsets.ViewSet):
         mute_mode = data.get('mute_mode', None)
         mute_until = data.get('mute_until', None)
 
-        if type(mute_until) != int and mute_until != None:
+        if type(mute_until) != str and mute_until != None:
             return Response(
                 status=HTTP_400_BAD_REQUEST,
                 data={'error': 'Invalid mute time!'}
             )
 
-        mute_until_datetime = datetime.now(timezone.utc) + timedelta(seconds=mute_until) if mute_until else None
+        try:
+            mute_until_datetime = datetime.strptime(mute_until, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc) if mute_until else None
+        except ValueError:
+            return Response(
+                status=HTTP_400_BAD_REQUEST,
+                data={'error': 'Invalid mute time! The format should be: YYYY-MM-DDTHH:MM:SS.sssZ'}
+            )
+
         try:
             GameManagementService.update_mute_mode_game_chat(
                 game_chat, 
