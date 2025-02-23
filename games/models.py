@@ -191,7 +191,7 @@ class GameChatMute(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['user'], 
+                fields=['chat', 'user'], 
                 condition=models.Q(disabled=False),
                 name='unique_chat_mute'
             )
@@ -226,7 +226,7 @@ class GameChatBan(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['user'], 
+                fields=['chat', 'user'], 
                 condition=models.Q(disabled=False),
                 name='unique_chat_ban'
             )
@@ -234,7 +234,6 @@ class GameChatBan(models.Model):
 
     def __str__(self):
         return f'{self.user}'
-
 
 class GamePrediction(models.Model):
     id = models.UUIDField(
