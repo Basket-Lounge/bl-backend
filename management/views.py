@@ -679,7 +679,9 @@ class GameManagementViewSet(viewsets.ViewSet):
             )
 
             if game_chat_ban:
+                GameManagementService.signal_disconnect_from_game_chat(pk, user_id)
                 GameManagementService.signal_deletion_user_messages(pk, user_id)
+
                 game_chat_ban = GameManagementService.get_game_chat_ban(game_chat_ban.id)
                 serializer = GameManagementSerializerService.serialize_game_chat_ban(game_chat_ban)
                 return Response(status=HTTP_201_CREATED, data=serializer.data)

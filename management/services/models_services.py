@@ -4,7 +4,7 @@ import uuid
 
 from django.db import IntegrityError
 from api.exceptions import BadRequestError, InternalServerError
-from api.websocket import send_message_to_centrifuge
+from api.websocket import disconnect_user_from_channel, send_message_to_centrifuge
 from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute
 from management.models import (
     Inquiry, 
@@ -1116,7 +1116,8 @@ class GameManagementService:
                 return ban
             else:
                 return None
-            
+
+    @staticmethod
     def signal_deletion_user_messages(pk: str, user_id: int) -> None:
         """
         Signal deletion of user messages.
@@ -1133,6 +1134,30 @@ class GameManagementService:
         resp_json = send_message_to_centrifuge(channel, {
             'user_id': int(user_id)
         }, 'delete_user_messages')
+
+        if not resp_json:
+            raise InternalServerError()
+
+        if resp_json.get('error', None):
+            raise InternalServerError()
+        
+    @staticmethod
+    def signal_disconnect_from_game_chat(pk: str, user_id: int) -> None:
+        """
+        Signal disconnection from game chat.
+
+        Args:
+            - pk: Game id.
+            - user_id: User id.
+
+        Returns:
+            - None
+        """
+
+        channel = f'games/{pk}/live-chat'
+        resp_json = disconnect_user_from_channel(user_id, channel)
+        if not resp_json:
+            raise InternalServerError()
 
         if resp_json.get('error', None):
             raise InternalServerError()
