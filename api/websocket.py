@@ -10,6 +10,34 @@ api_key = settings.CENTRIFUGO_API_KEY
 centrifugo_url = settings.CENTRIFUGO_URL
 
 
+def disconnect_user_from_channel(user_id: int, channel: str):
+    logger.info("Disconnecting user %s from channel %s", user_id, channel)
+
+    data = json.dumps({
+        "user": str(user_id),
+        "channel": channel
+    })
+
+    try:
+        headers = {'Content-type': 'application/json', 'X-API-Key': api_key}
+        resp = requests.post(
+            f"{centrifugo_url}/api/unsubscribe",
+            data=data,
+            headers=headers
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info("Response from centrifugo: %s", data)
+
+        if data.get('error', None):
+            logger.error("Error disconnecting user from channel: %s", data['error'])
+            return None
+    except requests.exceptions.HTTPError as e:
+        logger.error("Error disconnecting user from channel: %s", e)
+        return None
+
+    return resp.json()
+
 def send_message_to_centrifuge(channel: str, message: dict, type: str = "message"):
     logger.info("Sending a message to channel %s", channel)
 
