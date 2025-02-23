@@ -23,7 +23,7 @@ from api.paginators import (
 )
 
 from api.websocket import send_message_to_centrifuge
-from games.models import Game
+from games.models import Game, GameChatBan
 from management.models import (
     Inquiry, 
 )
@@ -825,6 +825,7 @@ class JWTViewSet(ViewSet):
     )
     def access(self, request):
         token = generate_websocket_connection_token(request.user.id)
+        print(token)
         return Response({'token': str(token)})
 
     @action(
@@ -837,6 +838,15 @@ class JWTViewSet(ViewSet):
             Game.objects.get(game_id=game_id)
         except Game.DoesNotExist:
             return Response(status=HTTP_404_NOT_FOUND)
+
+        ban = GameChatBan.objects.filter(
+            user=request.user,
+            chat__game__game_id=game_id,
+            disabled=False,
+        ).first()
+        
+        if ban:
+            return Response(status=HTTP_400_BAD_REQUEST, data={'error': 'You are banned from this chat'})
 
         channel_name = f'games/{game_id}/live-chat'
         token = generate_websocket_subscription_token(request.user.id, channel_name)
