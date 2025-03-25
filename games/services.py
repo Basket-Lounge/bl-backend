@@ -4,7 +4,7 @@ import pytz
 
 from api.exceptions import BadRequestError, InternalServerError, NotFoundError
 from api.websocket import send_message_to_centrifuge
-from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatMute, LineScore, TeamStatistics
+from games.models import Game, GameChat, GameChatBan, GameChatMessage, GameChatModifiedMessage, GameChatMute, LineScore, TeamStatistics
 
 from django.db.models import Prefetch, Q
 from django.db.models.manager import BaseManager
@@ -18,8 +18,11 @@ from rest_framework.status import (
     HTTP_404_NOT_FOUND, 
     HTTP_500_INTERNAL_SERVER_ERROR
 )
+from rest_framework.request import Request
+
 from typing import Tuple
 from users.models import User
+from users.services.models_services import UserService
 from users.utils import validate_websocket_subscription_token
 
 def update_game_date():
@@ -544,27 +547,19 @@ class GameChatService:
             return None
         
         return GameChatMessage.objects.filter(chat__game=game).select_related('user').order_by('created_at')
-    
-    @staticmethod
-    def block_user(pk: str, user: User, user_id: str) -> None:
-        """
-        Allow a user to block/unblock another user in a game chat.
-
-        Args:
-            - pk (str): game id
-            - user (User): user who is blocking/unblocking
-            - user_id (str): user id of the user to block/unblock
-
-        Returns:
-            - None
-        """
-        try:
-            game_chat = GameChat.objects.get(game__game_id=pk)
-        except GameChat.DoesNotExist:
-            raise NotFoundError()
         
     @staticmethod
-    def create_game_chat_message(request, pk):
+    def create_game_chat_message(request: Request, pk: str) -> str:
+        """
+        Create a game chat message.
+
+        Args:
+            - request (Request): request object
+            - pk (str): game id
+        
+        Returns:
+            - str: the datetime string of the next message allowed
+        """
         channel = f'games/{pk}/live-chat'
 
         subscription_token = request.data.get('subscription_token', None)
@@ -582,13 +577,21 @@ class GameChatService:
         if message is None:
             raise BadRequestError('Message is required')
 
+        if type(message) != str:
+            raise BadRequestError('Invalid message type')
+        
+        if len(message) == 0:
+            raise BadRequestError('Empty message')
+
         try:
             game = Game.objects.get(game_id=pk)
         except Game.DoesNotExist:
             raise NotFoundError()
         
         game_chat, _ = GameChat.objects.get_or_create(game=game)
-        if game_chat.mute_mode:
+        user_game_chat_admin = UserService.check_user_chat_admin(request.user)
+
+        if game_chat.mute_mode and not user_game_chat_admin:
             if game_chat.mute_until == None:
                 raise BadRequestError('Forever')
             
@@ -599,6 +602,17 @@ class GameChatService:
                 game_chat.mute_mode = False
                 game_chat.mute_until = None
                 game_chat.save()
+
+        if game_chat.slow_mode and not user_game_chat_admin:
+            last_message = GameChatMessage.objects.filter(
+                chat=game_chat,
+                user=request.user
+            ).order_by('-created_at').first()
+
+            if last_message:
+                next_message_allowed = last_message.created_at + timedelta(seconds=game_chat.slow_mode_time)
+                if datetime.now(timezone.utc) < next_message_allowed:
+                    raise BadRequestError(next_message_allowed.strftime('%Y-%m-%dT%H:%M:%S.%fZ'))
 
         ban = GameChatBan.objects.filter(
             user=request.user,
@@ -636,6 +650,8 @@ class GameChatService:
             message=message,
             user=request.user
         )
+        next_message_allowed = message_obj.created_at + timedelta(seconds=game_chat.slow_mode_time) if not user_game_chat_admin else message_obj.created_at
+        next_message_allowed_str = next_message_allowed.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         
         resp_json = send_message_to_centrifuge(channel, {
             'id': str(message_obj.id),
@@ -646,8 +662,104 @@ class GameChatService:
                 'favorite_team': user_favorite_team.team.symbol if user_favorite_team else None
             },
             'game': game.game_id,
-            'created_at': message_obj.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') 
+            'created_at': message_obj.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
         })
+
+        if resp_json.get('error', None):
+            raise InternalServerError()
+        
+        return next_message_allowed_str
+    
+    @staticmethod
+    def update_game_chat_message(request: Request, pk: str, message_id: str) -> None:
+        """
+        Update a game chat message.
+
+        Args:
+            - request (Request): request object
+            - pk (str): game id
+            - message_id (str): message id
+        
+        Returns:
+            - None
+        """
+        user = request.user
+        new_message = request.data.get('message', None)
+        if new_message is None:
+            raise BadRequestError('Message is required')
+        
+        if type(new_message) != str:
+            raise BadRequestError('Invalid message type')
+        
+        if len(new_message) == 0:
+            raise BadRequestError('Empty message')
+
+        message = GameChatMessage.objects.filter(
+            id=message_id,
+            user=user
+        ).first()
+
+        if message is None:
+            raise NotFoundError()
+
+        if message.message == new_message:
+            raise BadRequestError('No changes')
+        
+        if GameChatModifiedMessage.objects.filter(original_message=message).count() >= 10:
+            raise BadRequestError('Too many edits')
+
+        GameChatModifiedMessage.objects.create(
+            original_message=message,
+            message=new_message,
+        )
+
+        # Broadcast the edited message to the game chat
+        channel = f'games/{pk}/live-chat'
+        resp_json = send_message_to_centrifuge(channel, {
+            'id': str(message.id),
+            'message': new_message,
+            'user': {
+                'id': user.id,
+                'username': user.get_username()
+            },
+            'game': pk,
+            'created_at': message.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+            'edited': True
+        }, 'edit')
+
+        if resp_json.get('error', None):
+            raise InternalServerError()
+        
+    @staticmethod
+    def delete_game_chat_message(request: Request, pk: str, message_id: str) -> None:
+        """
+        Delete a game chat message.
+
+        Args:
+            - request (Request): request object
+            - pk (str): game id
+            - message_id (str): message id
+        
+        Returns:
+            - None
+        """
+        user = request.user
+        message = GameChatMessage.objects.filter(
+            chat__game__game_id=pk,
+            id=message_id,
+            user=user
+        ).first()
+
+        if message is None:
+            raise NotFoundError()
+
+        # Broadcast the deleted message to the game chat
+        channel = f'games/{pk}/live-chat'
+        resp_json = send_message_to_centrifuge(
+            channel, 
+            {'id': str(message.id)},
+            'delete'
+        )
 
         if resp_json.get('error', None):
             raise InternalServerError()

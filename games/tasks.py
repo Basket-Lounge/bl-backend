@@ -10,6 +10,7 @@ from games.services import update_live_scores, update_team_statistics
 from django.db import transaction, DatabaseError
 import logging
 
+
 logger = logging.getLogger(__name__)
 
 @shared_task
@@ -84,12 +85,21 @@ def update_game_score():
 
 def fix_game_score():
     gameDates = [
-        '2024-12-10',
-        '2024-12-11',
-        '2024-12-12',
-        '2024-12-13',
-        '2024-12-14',
-        '2024-12-15',
+        '2025-03-10',
+        '2025-03-11',
+        '2025-03-12',
+        '2025-03-13',
+        '2025-03-14',
+        '2025-03-15',
+        '2025-03-16',
+        '2025-03-17',
+        '2025-03-18',
+        '2025-03-19',
+        '2025-03-20',
+        '2025-03-21',
+        '2025-03-22',
+        '2025-03-23',
+        '2025-03-24',
     ]
 
     for gameDate in gameDates:

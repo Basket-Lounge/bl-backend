@@ -5,6 +5,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.status import (
+    HTTP_200_OK,
     HTTP_201_CREATED, 
 )
 from rest_framework.permissions import IsAuthenticated
@@ -100,11 +101,33 @@ class GameViewSet(viewsets.ViewSet):
     )
     def post_chat_message(self, request, pk=None):
         try:
-            GameChatService.create_game_chat_message(request, pk)
+            next_message_datetime_str = GameChatService.create_game_chat_message(request, pk)
+            return Response(
+                status=HTTP_201_CREATED, 
+                data={'next_message_datetime': next_message_datetime_str}
+            )
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
+    
+    @action(
+        detail=True, 
+        methods=['patch'], 
+        url_path=r'chat/messages/(?P<message_id>[0-9a-f-]+)',
+    )
+    def patch_chat_message(self, request, pk=None, message_id=None):
+        try:
+            GameChatService.update_game_chat_message(request, pk, message_id)
+            return Response(status=HTTP_200_OK)
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
 
-        return Response(status=HTTP_201_CREATED)
+    @patch_chat_message.mapping.delete    
+    def delete_chat_message(self, request, pk=None, message_id=None):
+        try:
+            GameChatService.delete_game_chat_message(request, pk, message_id)
+            return Response(status=HTTP_200_OK)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
 
 class GameChatViewSet(viewsets.ViewSet):
@@ -122,8 +145,10 @@ class GameChatViewSet(viewsets.ViewSet):
     )
     def post_chat_message(self, request, pk=None):
         try:
-            GameChatService.create_game_chat_message(request, pk)
+            next_message_datetime_str = GameChatService.create_game_chat_message(request, pk)
+            return Response(
+                status=HTTP_201_CREATED, 
+                data={'next_message_datetime': next_message_datetime_str}
+            )
         except CustomError as e:
             return Response(status=e.code, data={'error': e.message})
-
-        return Response(status=HTTP_201_CREATED)
