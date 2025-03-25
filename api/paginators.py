@@ -10,7 +10,6 @@ from rest_framework.request import Request
 from rest_framework.utils.urls import replace_query_param
 
 from api.exceptions import BadRequestError
-from management.models import InquiryMessage
 from users.services.models_services import InquiryService
 
 

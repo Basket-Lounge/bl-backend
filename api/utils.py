@@ -12,7 +12,7 @@ class MockResponse:
     def json(self):
         return self.json_data
     
-def is_valid_uuid(uuid_to_test: str, version : int =4) -> bool:
+def is_valid_uuid(uuid_to_test: str, version : int = 4) -> bool:
     """
     Check if uuid is valid.
 
@@ -24,8 +24,7 @@ def is_valid_uuid(uuid_to_test: str, version : int =4) -> bool:
     """
 
     try:
-        uuid_obj = uuid.UUID(uuid_to_test, version=version)
+        uuid.UUID(uuid_to_test, version=version)
+        return True
     except ValueError:
         return False
-
-    return True

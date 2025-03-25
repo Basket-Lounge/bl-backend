@@ -159,6 +159,22 @@ class GameChatMessage(models.Model):
     def __str__(self):
         return f'{self.user} in {self.chat}'
     
+class GameChatModifiedMessage(models.Model):
+    id = models.UUIDField(
+        primary_key=True, 
+        default=uuid.uuid4, 
+        editable=False
+    )
+    original_message = models.ForeignKey(
+        GameChatMessage, 
+        on_delete=models.CASCADE
+    )
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.original_message} modified at {self.created_at}'
+    
 class GameChatMute(models.Model):
     id = models.UUIDField(
         primary_key=True, 

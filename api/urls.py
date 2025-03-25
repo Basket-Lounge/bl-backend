@@ -20,6 +20,7 @@ from users.views import JWTViewSet, UserViewSet
 
 router = DefaultRouter()
 router.register(r'games', GameViewSet, basename='game')
+# router.register(r'games/chat', GameChatViewSet, basename='game_chat')
 router.register(r'inquiries', InquiryViewSet, basename='inquiry')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'reports', ReportViewSet, basename='report')

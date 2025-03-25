@@ -32,11 +32,11 @@ def disconnect_user_from_channel(user_id: int, channel: str):
         if data.get('error', None):
             logger.error("Error disconnecting user from channel: %s", data['error'])
             return None
+        
+        return data
     except requests.exceptions.HTTPError as e:
         logger.error("Error disconnecting user from channel: %s", e)
         return None
-
-    return resp.json()
 
 def send_message_to_centrifuge(channel: str, message: dict, type: str = "message"):
     logger.info("Sending a message to channel %s", channel)
@@ -61,6 +61,8 @@ def send_message_to_centrifuge(channel: str, message: dict, type: str = "message
         if data.get('error', None):
             logger.error("Error sending message to centrifugo: %s", data['error'])
             return None
+        
+        return data
     except requests.exceptions.ConnectionError as e:
         logger.error("Error connecting to centrifugo: %s", e)
         return None
@@ -70,8 +72,6 @@ def send_message_to_centrifuge(channel: str, message: dict, type: str = "message
     except Exception as e:
         logger.error("Error sending message to centrifugo: %s", e)
         return None
-
-    return resp.json()
 
 def broadcast_message_to_centrifuge(channels: list, message: dict):
     logger.info("Broadcasting a message to channels %s", channels)
@@ -95,8 +95,8 @@ def broadcast_message_to_centrifuge(channels: list, message: dict):
         if data.get('error', None):
             logger.error("Error broadcasting message to centrifugo: %s", data['error'])
             return None
+        
+        return data
     except requests.exceptions.HTTPError as e:
         logger.error("Error broadcasting message to centrifugo: %s", e)
         return None
-
-    return resp.json()
