@@ -11,7 +11,7 @@ from nba_api.stats.endpoints.leaguestandingsv3 import LeagueStandingsV3
 from nba_api.stats.endpoints.scoreboardv2 import ScoreboardV2
 import pytz
 
-from api.exceptions import AnonymousUserError
+from api.exceptions import AnonymousUserError, BadRequestError
 from games.models import Game, LineScore
 from games.serializers import (
     GameSerializer, 
@@ -697,7 +697,7 @@ class TeamService:
                     favorite_team_id = team['id']
                 
                 if count_favorite_teams > 1:
-                    return False, {'error': 'Only one favorite team allowed'}
+                    raise BadRequestError('Only one favorite team allowed')
 
             team_ids = [team['id'] for team in data]
             teams = Team.objects.filter(id__in=team_ids)
@@ -707,8 +707,6 @@ class TeamService:
                 TeamLike(user=user, team=team) if favorite_team_id != team.id else TeamLike(user=user, team=team, favorite=True)
                 for team in teams
             ])
-
-            return True, None
         
     @staticmethod
     def check_if_user_likes_team(user, team_id):
@@ -869,7 +867,8 @@ class TeamPlayerService:
     
     def get_team_player_last_n_games_log(player_id, n=5):
         return _get_player_last_n_games_log(player_id, n)
-    
+
+
 class TeamPlayerSerializerService:
     def serialize_players(players):
         return PlayerSerializer(

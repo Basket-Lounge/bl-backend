@@ -230,7 +230,7 @@ class TeamViewSet(viewsets.ViewSet):
         url_path=r'posts',
     )
     def post_team_post(self, request, pk=None):
-        created, error = PostService.create_post(request, pk)
+        _, error = PostService.create_post(request, pk)
         if error:
             return Response(error, status=HTTP_400_BAD_REQUEST)
 
@@ -424,15 +424,14 @@ class TeamViewSet(viewsets.ViewSet):
 
         try:
             PostService.create_comment(request, post)
+            return Response(
+                {'message': 'Comment created successfully!'}, 
+                status=HTTP_201_CREATED
+            )
         except CustomError as e:
             return Response({'error': e.message}, status=e.code)
         except ValidationError as e:
             return Response({'error': e.detail}, status=e.status_code)
-
-        return Response(
-            {'message': 'Comment created successfully!'}, 
-            status=HTTP_201_CREATED
-        )
     
     @action(
         detail=True,
@@ -575,13 +574,13 @@ class TeamViewSet(viewsets.ViewSet):
             else:
                 PostService.hide_comment(comment_id, request.user)
                 message = 'Comment hidden successfully!'
+
+            return Response(
+                {'message': message},
+                status=HTTP_200_OK
+            )
         except CustomError as e:
             return Response({'error': e.message}, status=e.code)
-
-        return Response(
-            {'message': message},
-            status=HTTP_200_OK
-        )
     
     @like_comment.mapping.get
     def get_likes(self, request, pk=None, post_id=None, comment_id=None):
@@ -609,12 +608,11 @@ class TeamViewSet(viewsets.ViewSet):
 
         try:
             PostService.create_comment_reply(request, comment)        
+            return Response(status=HTTP_201_CREATED)
         except CustomError as e:
             return Response({'error': e.message}, status=e.code)
         except ValidationError as e:
             return Response({'error': e.detail}, status=e.status_code)
-
-        return Response(status=HTTP_201_CREATED)
     
     @reply_comment.mapping.get
     def get_replies(self, request, pk=None, post_id=None, comment_id=None):
@@ -653,15 +651,14 @@ class TeamViewSet(viewsets.ViewSet):
 
         try: 
             PostService.delete_reply(request.user, reply_id)
+            return Response(
+                {'message': 'Reply deleted successfully!'}, 
+                status=HTTP_200_OK
+            )
         except CustomError as e:
             return Response({'error': e.message}, status=e.code)
         except Exception as e:
             return Response({'error': 'An error occurred'}, status=HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response(
-            {'message': 'Reply deleted successfully!'}, 
-            status=HTTP_200_OK
-        )
     
     @action(
         detail=True,
@@ -700,15 +697,15 @@ class TeamViewSet(viewsets.ViewSet):
             else:
                 PostService.hide_reply(reply_id, request.user)
                 message = 'Reply hidden successfully!'
+
+            return Response(
+                {'message': message},
+                status=HTTP_200_OK
+            )
         except CustomError as e:
             return Response({'error': e.message}, status=e.code)
         except Exception as e:
             return Response({'error': 'An error occurred'}, status=HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response(
-            {'message': message},
-            status=HTTP_200_OK
-        )
     
 class TeamsPostViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='top-5')

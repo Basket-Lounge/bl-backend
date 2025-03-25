@@ -360,6 +360,19 @@ class UserService:
         return User.objects.filter(id=user_id).exists()
     
     @staticmethod
+    def check_user_chat_admin(user: User) -> bool:
+        """
+        Check if a user is an admin for game chat.
+
+        Args:
+            - user (User): The user to check.
+
+        Returns:
+            - bool: True if the user is an admin, False otherwise.
+        """
+        return True if user.role.weight <= 3 else False
+    
+    @staticmethod
     def get_user_with_id_only(user_id: int) -> User | None:
         """
         Get a user with the attribute of "id".
@@ -529,7 +542,9 @@ class UserService:
         Returns:
             - BaseManager[Block]: The queryset of the blocks.
         """
-        return Block.objects.filter(user=user)
+        return Block.objects.select_related(
+            'blocked_user'
+        ).filter(user=user)
 
 class UserViewService:
     @staticmethod

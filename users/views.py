@@ -104,6 +104,8 @@ class UserViewSet(ViewSet):
             permission_classes = [AllowAny]
         elif self.action == 'block_user':
             permission_classes = [IsAuthenticated]
+        elif self.action == 'block_unblock_user':
+            permission_classes = [IsAuthenticated]
         elif self.action == 'get_blocked_users':
             permission_classes = [IsAuthenticated]
         elif self.action == 'post_favorite_team':
@@ -225,6 +227,28 @@ class UserViewSet(ViewSet):
         return Response(users_list)
     
     @action(
+        detail=False,
+        methods=['post'],
+        url_path=r'me/blocked-users/(?P<blocked_user_id>[0-9a-f-]+)',
+    )
+    def block_unblock_user(self, request, blocked_user_id):
+        user = UserService.get_user_by_id(blocked_user_id)
+        if not user:
+            return Response(status=HTTP_404_NOT_FOUND)
+        
+        # is_user_admin = UserService.check_user_chat_admin(user)
+        # if is_user_admin:
+        #     return Response(status=HTTP_404_NOT_FOUND)
+
+        user_blocked = UserService.check_user_blocked(request.user, user)
+        if user_blocked:
+            UserService.unblock_user(request.user, user)
+            return Response(status=HTTP_200_OK)
+
+        UserService.block_user(request.user, user)
+        return Response(status=HTTP_201_CREATED)
+    
+    @action(
         detail=True,
         methods=['get'],
         url_path='favorite-teams',
@@ -251,9 +275,10 @@ class UserViewSet(ViewSet):
 
     @get_favorite_teams.mapping.put
     def put_favorite_teams(self, request):
-        created, error = TeamService.update_user_favorite_teams(request)
-        if error:
-            return Response(status=HTTP_400_BAD_REQUEST, data=error)
+        try:
+            TeamService.update_user_favorite_teams(request)
+        except CustomError as e:
+            return Response(status=e.code, data={'error': e.message})
 
         return Response(status=HTTP_201_CREATED)
     
@@ -825,7 +850,6 @@ class JWTViewSet(ViewSet):
     )
     def access(self, request):
         token = generate_websocket_connection_token(request.user.id)
-        print(token)
         return Response({'token': str(token)})
 
     @action(

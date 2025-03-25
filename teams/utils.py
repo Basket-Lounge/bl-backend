@@ -1,5 +1,3 @@
-from django.conf import settings
-
 def convert_month_string_to_int(month):
     months = {
         'january': 1,
