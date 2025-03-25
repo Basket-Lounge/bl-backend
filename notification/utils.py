@@ -3,7 +3,7 @@ from api.paginators import CustomPageNumberPagination, NotificationHeaderPageNum
 
 CONTEXT_HEADER = "header"
 
-def get_notification_pagination_class(context: str) -> type[CustomPageNumberPagination]:
+def get_notification_pagination_class(context: str = None) -> type[CustomPageNumberPagination]:
     """
     Get the appropriate pagination class based on the context.
 
